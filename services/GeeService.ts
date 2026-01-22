@@ -238,4 +238,30 @@ export class GeeService {
       }
     });
   }
+
+  // --- ADDED: GET MAP LAYER ---
+  static getOverlayMapId(imageId: string): Promise<string> {
+    const ee = this.ee;
+    return new Promise((resolve, reject) => {
+      try {
+        const image = ee.Image(imageId);
+        // RGB Vis Parameters for Sentinel-2
+        const vis = { 
+            min: 0, 
+            max: 3000, 
+            bands: ['B4', 'B3', 'B2'] 
+        };
+        image.getMapId(vis, (result: any, error: any) => {
+            if (error) {
+                reject(error);
+            } else {
+                // Return the urlFormat (template url for tiles)
+                resolve(result.urlFormat);
+            }
+        });
+      } catch (e) {
+        reject(e);
+      }
+    });
+  }
 }

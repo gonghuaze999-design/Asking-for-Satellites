@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Database, Search, MousePointer2, Loader2, CheckCircle2, UploadCloud, Terminal, AlertCircle, ChevronRight, Cloud, Radio, Zap } from 'lucide-react';
+import { Database, Search, MousePointer2, Loader2, CheckCircle2, UploadCloud, Terminal, AlertCircle, ChevronRight, Cloud, Radio, Zap, X, Map as MapIcon, Calendar, Layers, Hash } from 'lucide-react';
 import GoogleMapView, { GoogleMapRef } from '../components/GoogleMapView';
 import { GeeService } from '../services/GeeService';
 import { SatelliteResult } from '../types';
@@ -33,7 +33,10 @@ const DataSearch: React.FC<DataSearchProps> = ({ addTask, addLog, results, setRe
   const [loading, setLoading] = useState(false);
   const [processLogs, setProcessLogs] = useState<string[]>([]);
   const [authError, setAuthError] = useState<string | null>(null);
+  
+  // Selection State
   const [selectedResult, setSelectedResult] = useState<SatelliteResult | null>(null);
+  const [tileLoading, setTileLoading] = useState(false);
 
   const [drawGeo, setDrawGeo] = useState<any>(null);
   const [fileGeo, setFileGeo] = useState<any>(null);
@@ -84,6 +87,8 @@ const DataSearch: React.FC<DataSearchProps> = ({ addTask, addLog, results, setRe
     setAuthError(null);
     setProcessLogs(["初始化 GEE 通讯..."]);
     setResults([]);
+    setSelectedResult(null);
+    mapRef.current?.clearOverlays();
     
     try {
       let finalGeo;
@@ -112,22 +117,23 @@ const DataSearch: React.FC<DataSearchProps> = ({ addTask, addLog, results, setRe
       updateProcess(`致命错误: ${e.message}`);
       addLog('ERROR', `SEARCH_FAILED: ${e.message}`);
     } finally {
-      // Extended delay to allow users to read logs
-      updateProcess("会话结束. (Keeping logs for review)");
+      updateProcess("会话结束.");
       setTimeout(() => {
         setLoading(false);
-      }, 4000);
+      }, 2000);
     }
   };
 
-  const handleResultClick = (res: SatelliteResult) => {
+  const handleResultClick = async (res: SatelliteResult) => {
+    // If already loading or same result, do basic check, but allow re-click to refresh
     setSelectedResult(res);
-    // Validate bounds before trying to add to map
+    setTileLoading(true);
+    addLog('DEBUG', `Selecting Result: ${res.id}`);
+
+    // 1. Draw Bounds
     if (res.bounds && Array.isArray(res.bounds) && res.bounds.length > 2) {
       try {
-        // GeeService returns [lat, lng], Google Map GeoJSON expects [lng, lat]
         const coords = res.bounds.map(b => [b[1], b[0]]);
-        // Close the loop if needed
         if (coords[0][0] !== coords[coords.length-1][0] || coords[0][1] !== coords[coords.length-1][1]) {
             coords.push(coords[0]);
         }
@@ -143,6 +149,27 @@ const DataSearch: React.FC<DataSearchProps> = ({ addTask, addLog, results, setRe
         addLog('WARN', '无效的影像几何信息');
       }
     }
+
+    // 2. Fetch and Overlay Tiles
+    try {
+        const mapIdUrl = await GeeService.getOverlayMapId(res.id);
+        if (mapIdUrl) {
+            mapRef.current?.addTileLayer(mapIdUrl);
+            addLog('SUCCESS', `图层叠加成功: ${res.id}`);
+        } else {
+             addLog('WARN', `GEE 未返回有效的图层 URL`);
+        }
+    } catch (e: any) {
+        console.error(e);
+        addLog('ERROR', `图层加载失败: ${e.message}`);
+    } finally {
+        setTileLoading(false);
+    }
+  };
+
+  const closeInspector = () => {
+      setSelectedResult(null);
+      mapRef.current?.clearOverlays();
   };
 
   return (
@@ -246,6 +273,12 @@ const DataSearch: React.FC<DataSearchProps> = ({ addTask, addLog, results, setRe
                         ) : (
                             <div className="w-full h-full flex items-center justify-center bg-slate-800 text-slate-500 text-[8px]">NO IMG</div>
                         )}
+                        {/* Status Overlay */}
+                        {(selectedResult?.id === res.id) && (
+                           <div className="absolute inset-0 bg-primary/20 flex items-center justify-center backdrop-blur-[1px]">
+                              {tileLoading ? <Loader2 size={12} className="animate-spin text-white" /> : <MapIcon size={12} className="text-white drop-shadow-md" />}
+                           </div>
+                        )}
                     </div>
                     <div className="flex-1 p-2 flex flex-col justify-center min-w-0">
                       <div className="flex justify-between items-center mb-0.5">
@@ -269,6 +302,8 @@ const DataSearch: React.FC<DataSearchProps> = ({ addTask, addLog, results, setRe
 
       <main className="flex-1 relative bg-black">
         <GoogleMapView ref={mapRef} showDrawingTools={roiMode === 'DRAW'} onGeometryChange={setDrawGeo} />
+        
+        {/* Loading Overlay */}
         {loading && (
           <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-[280px]">
             <div className="bg-[#14161c]/90 backdrop-blur-xl border border-white/10 p-5 rounded-[24px] shadow-2xl space-y-3">
@@ -284,6 +319,66 @@ const DataSearch: React.FC<DataSearchProps> = ({ addTask, addLog, results, setRe
                 ))}
               </div>
             </div>
+          </div>
+        )}
+
+        {/* Detailed Info Panel (Inspector) */}
+        {selectedResult && !loading && (
+          <div className="absolute top-6 right-6 w-72 bg-[#14161c]/95 backdrop-blur-md border border-white/10 rounded-[24px] shadow-2xl overflow-hidden animate-in slide-in-from-right-4 duration-300">
+             <div className="p-4 border-b border-white/5 flex items-start justify-between">
+                <div>
+                   <h3 className="text-[10px] font-black uppercase tracking-widest text-primary flex items-center gap-1.5"><Layers size={12} /> Image Inspector</h3>
+                   <p className="text-[9px] text-slate-500 font-mono mt-0.5 truncate max-w-[180px]">{selectedResult.id}</p>
+                </div>
+                <button onClick={closeInspector} className="text-slate-500 hover:text-white transition-colors"><X size={14} /></button>
+             </div>
+             
+             <div className="p-4 space-y-4">
+                <div className="grid grid-cols-2 gap-3">
+                   <div className="bg-black/40 p-3 rounded-xl border border-white/5">
+                      <div className="flex items-center gap-2 text-slate-500 mb-1">
+                         <Calendar size={10} />
+                         <span className="text-[8px] font-black uppercase tracking-widest">Acquisition</span>
+                      </div>
+                      <p className="text-sm font-bold text-slate-200">{selectedResult.date}</p>
+                   </div>
+                   <div className="bg-black/40 p-3 rounded-xl border border-white/5">
+                      <div className="flex items-center gap-2 text-slate-500 mb-1">
+                         <Cloud size={10} />
+                         <span className="text-[8px] font-black uppercase tracking-widest">Cloud Cover</span>
+                      </div>
+                      <p className="text-sm font-bold text-emerald-400">{selectedResult.cloudCover}%</p>
+                   </div>
+                </div>
+
+                <div className="bg-black/40 p-3 rounded-xl border border-white/5">
+                    <div className="flex items-center gap-2 text-slate-500 mb-1">
+                        <Hash size={10} />
+                        <span className="text-[8px] font-black uppercase tracking-widest">MGRS Tile</span>
+                    </div>
+                    <p className="text-xs font-mono text-slate-300">{selectedResult.tileId || 'N/A'}</p>
+                </div>
+
+                <div className="space-y-2">
+                   <p className="text-[8px] font-black uppercase tracking-widest text-slate-500">Visualization</p>
+                   <div className="flex items-center justify-between bg-black/40 p-2 rounded-lg border border-white/5">
+                      <div className="flex items-center gap-2">
+                         <div className="size-2 rounded-full bg-red-500" />
+                         <div className="size-2 rounded-full bg-green-500" />
+                         <div className="size-2 rounded-full bg-blue-500" />
+                         <span className="text-[9px] text-slate-300 font-bold">RGB (True Color)</span>
+                      </div>
+                      <span className="text-[8px] text-slate-500 font-mono">B4,B3,B2</span>
+                   </div>
+                </div>
+
+                <button 
+                  onClick={() => addTask(`Export ${selectedResult.id}`, 'DRIVE_EXPORT')}
+                  className="w-full bg-white hover:bg-slate-200 text-black font-black text-[9px] uppercase tracking-widest py-3 rounded-xl transition-colors flex items-center justify-center gap-2"
+                >
+                   <UploadCloud size={12} /> Export to Drive
+                </button>
+             </div>
           </div>
         )}
       </main>

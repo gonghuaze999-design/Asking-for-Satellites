@@ -14,6 +14,7 @@ export interface GoogleMapRef {
   setCenter: (lat: number, lng: number) => void;
   fitBounds: (bounds: any) => void;
   addGeoJson: (data: any) => void;
+  addTileLayer: (urlTemplate: string) => void; // New Method
   clearOverlays: () => void;
 }
 
@@ -39,11 +40,9 @@ const GoogleMapView = forwardRef<GoogleMapRef, GoogleMapViewProps>(({ onGeometry
         console.warn("Error clearing drawn overlays:", e);
     }
 
-    // 2. Clear Data Layer (GeoJSON) - The critical fix
+    // 2. Clear Data Layer (GeoJSON)
     try {
         if (mapInstance.current && mapInstance.current.data) {
-            // Important: Collect features first, then remove. 
-            // modifying the collection while iterating causes crashes.
             const featuresToRemove: any[] = [];
             mapInstance.current.data.forEach((feature: any) => {
                 featuresToRemove.push(feature);
@@ -55,23 +54,36 @@ const GoogleMapView = forwardRef<GoogleMapRef, GoogleMapViewProps>(({ onGeometry
     } catch (e) {
         console.error("Error clearing data layer:", e);
     }
+    
+    // 3. Clear Tile Overlays
+    try {
+        if (mapInstance.current && mapInstance.current.overlayMapTypes) {
+            mapInstance.current.overlayMapTypes.clear();
+        }
+    } catch (e) {
+        console.error("Error clearing tile overlays:", e);
+    }
   };
 
   useImperativeHandle(ref, () => ({
     setCenter: (lat: number, lng: number) => mapInstance.current?.setCenter({ lat, lng }),
     fitBounds: (bounds: any) => mapInstance.current?.fitBounds(bounds),
     addGeoJson: (data: any) => {
-      // 1. Clear old data
-      clearOverlays(); 
+      // Note: We do NOT clear everything here, because we might want bounds + tiles
+      // But for this app flow, we usually clear old selection before new selection.
+      // Let's assume the parent manages full clear if needed.
+      // But actually, for single selection, we usually want to clear old feature.
       
-      // 2. Validate inputs
+      // Clear only GeoJSON features, keep tiles if any (though usually they go together)
+      if (mapInstance.current && mapInstance.current.data) {
+          mapInstance.current.data.forEach((f: any) => mapInstance.current.data.remove(f));
+      }
+
       if (!mapInstance.current || !mapInstance.current.data || !data) return;
 
-      // 3. Add new data safely
       try {
         mapInstance.current.data.addGeoJson(data);
         
-        // 4. Fit bounds to new polygon
         const bounds = new google.maps.LatLngBounds();
         let hasPoints = false;
         mapInstance.current.data.forEach((f: any) => {
@@ -85,6 +97,31 @@ const GoogleMapView = forwardRef<GoogleMapRef, GoogleMapViewProps>(({ onGeometry
         console.error("Map GeoJSON Add Error:", e);
       }
     },
+    addTileLayer: (urlTemplate: string) => {
+        if (!mapInstance.current) return;
+        
+        console.log("Adding Tile Layer to Map:", urlTemplate);
+
+        // Remove existing overlays to show only the new one
+        mapInstance.current.overlayMapTypes.clear();
+
+        const layer = new google.maps.ImageMapType({
+            getTileUrl: (coord: any, zoom: any) => {
+                // Ensure the template replaces {x}, {y}, {z} correctly
+                const url = urlTemplate
+                    .replace('{x}', coord.x.toString())
+                    .replace('{y}', coord.y.toString())
+                    .replace('{z}', zoom.toString());
+                return url;
+            },
+            tileSize: new google.maps.Size(256, 256),
+            opacity: 1.0,
+            name: 'Sentinel-2',
+            isPng: true
+        });
+
+        mapInstance.current.overlayMapTypes.push(layer);
+    },
     clearOverlays
   }));
 
@@ -94,10 +131,6 @@ const GoogleMapView = forwardRef<GoogleMapRef, GoogleMapViewProps>(({ onGeometry
       drawingManager.current.setOptions({
         drawingControl: showDrawingTools
       });
-      if (!showDrawingTools) {
-        // When hiding tools, assume we might want to clear user drawings too
-        // But logic in DataSearch handles the actual clearing via clearOverlays() when mode changes
-      }
     }
   }, [showDrawingTools]);
 
@@ -118,10 +151,10 @@ const GoogleMapView = forwardRef<GoogleMapRef, GoogleMapViewProps>(({ onGeometry
     // Style the GeoJSON data layer
     map.data.setStyle({
       fillColor: '#11b4d4',
-      fillOpacity: 0.2,
+      fillOpacity: 0.0, // Make polygon transparent inside so we can see the tile layer
       strokeColor: '#11b4d4',
       strokeWeight: 2,
-      clickable: false // Pass clicks through
+      clickable: false 
     });
 
     const dm = new google.maps.drawing.DrawingManager({
@@ -151,12 +184,10 @@ const GoogleMapView = forwardRef<GoogleMapRef, GoogleMapViewProps>(({ onGeometry
     dm.setMap(map);
 
     google.maps.event.addListener(dm, 'overlaycomplete', (e: any) => {
-      // Keep only one shape
       overlays.current.forEach(o => o.setMap(null));
       overlays.current = [e.overlay];
       
       let geoJson: any = null;
-      // Convert Overlay to GeoJSON
       if (e.type === 'rectangle') {
         const b = e.overlay.getBounds();
         const ne = b.getNorthEast();
@@ -174,7 +205,7 @@ const GoogleMapView = forwardRef<GoogleMapRef, GoogleMapViewProps>(({ onGeometry
         for (let i = 0; i < path.getLength(); i++) {
           coords.push([path.getAt(i).lng(), path.getAt(i).lat()]);
         }
-        coords.push(coords[0]); // Close loop
+        coords.push(coords[0]); 
         geoJson = { type: "Feature", geometry: { type: "Polygon", coordinates: [coords] } };
       }
       onGeometryChange(geoJson);

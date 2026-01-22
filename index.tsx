@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
-import { Satellite, Loader2, ChevronRight, AlertCircle, ShieldAlert, WifiOff, RefreshCw, Globe2, ServerCrash, KeyRound, Terminal } from 'lucide-react';
+import { Satellite, Loader2, ChevronRight, AlertCircle, ShieldAlert, WifiOff, RefreshCw, Globe2, ServerCrash, KeyRound, Terminal, CheckCircle2 } from 'lucide-react';
 import { GeeService } from './services/GeeService';
 
 // Extend window interface
@@ -21,6 +21,8 @@ declare global {
     __MANUAL_KEY__: string | null;
   }
 }
+
+const APP_VERSION = "v1.0.0-stable";
 
 const rootElement = document.getElementById('root');
 if (!rootElement) throw new Error("Root element not found");
@@ -227,6 +229,9 @@ const StartupLauncher = () => {
             <Satellite size={32} className="text-black" />
           </div>
           <h1 className="text-3xl font-black uppercase tracking-[0.2em] text-white">Workbench <span className="text-primary">Pro</span></h1>
+          <div className="flex items-center gap-2 mt-2">
+            <span className="text-[10px] bg-white/10 px-2 py-0.5 rounded-full text-slate-400 font-mono">{APP_VERSION}</span>
+          </div>
           
           <div className="mt-4 flex flex-col items-center gap-2 h-10">
             {sdkState === 'CHECKING' && (
