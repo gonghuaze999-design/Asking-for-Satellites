@@ -1,6 +1,6 @@
 
 import React, { useEffect, useRef, useState, useImperativeHandle, forwardRef } from 'react';
-import { MapPin, Maximize2, Loader2, Trash2, Layers, MousePointer2 } from 'lucide-react';
+import { MapPin, Loader2 } from 'lucide-react';
 
 declare const google: any;
 
@@ -25,17 +25,35 @@ const GoogleMapView = forwardRef<GoogleMapRef, GoogleMapViewProps>(({ onGeometry
   const [info, setInfo] = useState({ lat: center.lat, lng: center.lng, zoom: 12 });
   const overlays = useRef<any[]>([]);
 
-  // Fix: Move clearOverlays logic to a stable function to avoid 'this' context issues in useImperativeHandle
+  // Robust Clear Function
   const clearOverlays = () => {
-    overlays.current.forEach(o => o.setMap(null));
-    overlays.current = [];
-    if (mapInstance.current && mapInstance.current.data) {
-      mapInstance.current.data.forEach((feature: any) => {
-        // Fix: Added null check to avoid 'Object is possibly undefined'
-        if (mapInstance.current && mapInstance.current.data) {
-          mapInstance.current.data.remove(feature);
+    // 1. Clear manually drawn shapes
+    try {
+        if (overlays.current) {
+            overlays.current.forEach(o => {
+                if (o && typeof o.setMap === 'function') o.setMap(null);
+            });
         }
-      });
+        overlays.current = [];
+    } catch (e) {
+        console.warn("Error clearing drawn overlays:", e);
+    }
+
+    // 2. Clear Data Layer (GeoJSON) - The critical fix
+    try {
+        if (mapInstance.current && mapInstance.current.data) {
+            // Important: Collect features first, then remove. 
+            // modifying the collection while iterating causes crashes.
+            const featuresToRemove: any[] = [];
+            mapInstance.current.data.forEach((feature: any) => {
+                featuresToRemove.push(feature);
+            });
+            featuresToRemove.forEach((feature: any) => {
+                mapInstance.current.data.remove(feature);
+            });
+        }
+    } catch (e) {
+        console.error("Error clearing data layer:", e);
     }
   };
 
@@ -43,35 +61,49 @@ const GoogleMapView = forwardRef<GoogleMapRef, GoogleMapViewProps>(({ onGeometry
     setCenter: (lat: number, lng: number) => mapInstance.current?.setCenter({ lat, lng }),
     fitBounds: (bounds: any) => mapInstance.current?.fitBounds(bounds),
     addGeoJson: (data: any) => {
-      // Fix: Use local clearOverlays instead of 'this.clearOverlays' (line 32)
-      clearOverlays();
-      // Fix: Explicitly check mapInstance and its data property to resolve 'Object is possibly undefined'
-      if (mapInstance.current && mapInstance.current.data) {
+      // 1. Clear old data
+      clearOverlays(); 
+      
+      // 2. Validate inputs
+      if (!mapInstance.current || !mapInstance.current.data || !data) return;
+
+      // 3. Add new data safely
+      try {
         mapInstance.current.data.addGeoJson(data);
+        
+        // 4. Fit bounds to new polygon
         const bounds = new google.maps.LatLngBounds();
-        mapInstance.current.data.forEach((f: any) => f.getGeometry().forEachLatLng((l: any) => bounds.extend(l)));
-        mapInstance.current.fitBounds(bounds);
+        let hasPoints = false;
+        mapInstance.current.data.forEach((f: any) => {
+          f.getGeometry().forEachLatLng((l: any) => {
+            bounds.extend(l);
+            hasPoints = true;
+          });
+        });
+        if (hasPoints) mapInstance.current.fitBounds(bounds);
+      } catch (e) {
+        console.error("Map GeoJSON Add Error:", e);
       }
     },
     clearOverlays
   }));
 
-  // 监听绘图工具的可见性切换
+  // Handle Drawing Tools Visibility
   useEffect(() => {
     if (drawingManager.current) {
       drawingManager.current.setOptions({
         drawingControl: showDrawingTools
       });
-      // 如果关闭工具，同时清空当前地图上的临时覆盖物
       if (!showDrawingTools) {
-        overlays.current.forEach(o => o.setMap(null));
-        overlays.current = [];
+        // When hiding tools, assume we might want to clear user drawings too
+        // But logic in DataSearch handles the actual clearing via clearOverlays() when mode changes
       }
     }
   }, [showDrawingTools]);
 
   useEffect(() => {
     if (!containerRef.current || isLoaded) return;
+    if (!window.google || !window.google.maps) return;
     
     const map = new google.maps.Map(containerRef.current, {
       center, 
@@ -83,6 +115,15 @@ const GoogleMapView = forwardRef<GoogleMapRef, GoogleMapViewProps>(({ onGeometry
     });
     mapInstance.current = map;
 
+    // Style the GeoJSON data layer
+    map.data.setStyle({
+      fillColor: '#11b4d4',
+      fillOpacity: 0.2,
+      strokeColor: '#11b4d4',
+      strokeWeight: 2,
+      clickable: false // Pass clicks through
+    });
+
     const dm = new google.maps.drawing.DrawingManager({
       drawingControl: showDrawingTools,
       drawingControlOptions: { 
@@ -91,7 +132,7 @@ const GoogleMapView = forwardRef<GoogleMapRef, GoogleMapViewProps>(({ onGeometry
       },
       polygonOptions: { 
         fillColor: '#11b4d4', 
-        fillOpacity: 0.15, 
+        fillOpacity: 0.2, 
         strokeColor: '#11b4d4', 
         strokeWeight: 2, 
         editable: true,
@@ -99,7 +140,7 @@ const GoogleMapView = forwardRef<GoogleMapRef, GoogleMapViewProps>(({ onGeometry
       },
       rectangleOptions: {
         fillColor: '#11b4d4',
-        fillOpacity: 0.15,
+        fillOpacity: 0.2,
         strokeColor: '#11b4d4',
         strokeWeight: 2,
         editable: true,
@@ -110,11 +151,12 @@ const GoogleMapView = forwardRef<GoogleMapRef, GoogleMapViewProps>(({ onGeometry
     dm.setMap(map);
 
     google.maps.event.addListener(dm, 'overlaycomplete', (e: any) => {
-      // 保持单选：清除之前的绘图
+      // Keep only one shape
       overlays.current.forEach(o => o.setMap(null));
       overlays.current = [e.overlay];
       
       let geoJson: any = null;
+      // Convert Overlay to GeoJSON
       if (e.type === 'rectangle') {
         const b = e.overlay.getBounds();
         const ne = b.getNorthEast();
@@ -132,7 +174,7 @@ const GoogleMapView = forwardRef<GoogleMapRef, GoogleMapViewProps>(({ onGeometry
         for (let i = 0; i < path.getLength(); i++) {
           coords.push([path.getAt(i).lng(), path.getAt(i).lat()]);
         }
-        coords.push(coords[0]); // 闭合环
+        coords.push(coords[0]); // Close loop
         geoJson = { type: "Feature", geometry: { type: "Polygon", coordinates: [coords] } };
       }
       onGeometryChange(geoJson);
@@ -151,26 +193,18 @@ const GoogleMapView = forwardRef<GoogleMapRef, GoogleMapViewProps>(({ onGeometry
       {!isLoaded && (
         <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-background-dark">
           <Loader2 size={32} className="animate-spin text-primary mb-4" />
-          <span className="text-[10px] font-mono text-slate-500 uppercase tracking-widest">Waking Up Satellite Engine...</span>
+          <span className="text-[10px] font-mono text-slate-500 uppercase tracking-widest">Initializing Map Engine...</span>
         </div>
       )}
       <div ref={containerRef} className="absolute inset-0" />
       {isLoaded && (
-        <>
-          <div className="absolute top-4 left-4 z-10 bg-background-dark/80 backdrop-blur-md border border-border-dark p-3 rounded-2xl flex items-center gap-4 shadow-2xl">
-            <div className="flex items-center gap-2 border-r border-border-dark pr-4">
-              <MapPin size={14} className="text-primary" />
-              <span className="text-xs font-mono font-bold tracking-tight">{info.lat.toFixed(5)}, {info.lng.toFixed(5)}</span>
-            </div>
-            <div className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">ZOOM {info.zoom}</div>
+        <div className="absolute top-4 left-4 z-10 bg-background-dark/80 backdrop-blur-md border border-border-dark p-3 rounded-2xl flex items-center gap-4 shadow-2xl pointer-events-none">
+          <div className="flex items-center gap-2 border-r border-border-dark pr-4">
+            <MapPin size={14} className="text-primary" />
+            <span className="text-xs font-mono font-bold tracking-tight">{info.lat.toFixed(5)}, {info.lng.toFixed(5)}</span>
           </div>
-          
-          <div className="absolute right-4 top-16 z-10 flex flex-col gap-2">
-            <button className="bg-background-dark/80 backdrop-blur-md border border-border-dark p-3 rounded-xl hover:text-primary transition-all shadow-2xl">
-              <Layers size={18} />
-            </button>
-          </div>
-        </>
+          <div className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">ZOOM {info.zoom}</div>
+        </div>
       )}
     </div>
   );

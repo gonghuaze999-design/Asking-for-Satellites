@@ -1,153 +1,240 @@
 
-/**
- * GEE Service - 深度适配 API Key 鉴权与项目 ID
- */
 import { SatelliteResult } from "../types";
-
-declare const ee: any;
+import { SentinelService } from "./SentinelService";
 
 export class GeeService {
   private static initialized = false;
-  
-  // 根据用户提供的最新信息落实：项目名称：GEE-Satellite-App
-  public static readonly PROJECT_NAME = 'GEE-Satellite-App';
-  // 项目 ID：gee-satellite-app-483808
-  public static readonly PROJECT_ID = 'gee-satellite-app-483808';
+  private static currentProjectId = '';
 
-  private static getEffectiveKey(): string {
-    return window.__MANUAL_KEY__ || process.env.API_KEY || '';
+  private static get ee(): any {
+    return (window as any).ee;
   }
 
-  static async ensureInitialized(): Promise<void> {
-    if (this.initialized) return;
+  // --- MANUAL AUTH MODE (Bypass OAuth) ---
+  static async authenticateManual(token: string, projectId: string): Promise<void> {
+    this.currentProjectId = projectId;
+    const ee = this.ee;
     
+    if (!ee || !ee.data) throw new Error("GEE SDK not loaded.");
+
+    return new Promise((resolve, reject) => {
+        try {
+            SentinelService.log('INFO', 'Attempting Manual Token Injection...');
+            
+            // Validate token format roughly
+            if (token.length < 10) throw new Error("Token looks too short to be valid.");
+
+            // Inject manually. We pass a dummy client ID because we have a bearer token.
+            // The SDK requires a clientID arg but relies on the token for actual auth.
+            ee.data.setAuthToken(
+                'manual-token-client-id', 
+                'Bearer', 
+                token, 
+                3600, // 1 hour expiry assumption
+                [], 
+                undefined, 
+                false
+            );
+
+            ee.initialize(
+                null, 
+                null, 
+                () => {
+                    this.initialized = true;
+                    SentinelService.log('SUCCESS', `GEE Initialized via Manual Token. Project: ${projectId}`);
+                    resolve();
+                }, 
+                (err: any) => {
+                    reject(new Error(`Manual Init Failed: ${err?.message || err}`));
+                }, 
+                null, 
+                projectId
+            );
+        } catch (e: any) {
+            reject(e);
+        }
+    });
+  }
+
+  // --- STANDARD OAUTH MODE ---
+  static async authenticate(clientId: string, projectId: string): Promise<void> {
+    this.currentProjectId = projectId;
+    const ee = this.ee;
+    
+    // 1. Dependency Check
+    if (!ee || !ee.data) {
+      const msg = "GEE SDK Library not found (window.ee).";
+      SentinelService.log('ERROR', msg);
+      throw new Error(msg);
+    }
+
+    if (!window.google?.accounts?.oauth2) {
+      const msg = "Google Identity Services not loaded (window.google.accounts).";
+      SentinelService.log('ERROR', msg);
+      throw new Error(msg);
+    }
+
+    // 2. Manual OAuth 2.0 Flow (Bypassing ee.data.authenticateViaPopup)
     return new Promise((resolve, reject) => {
       try {
-        const apiKey = this.getEffectiveKey();
+        SentinelService.log('INFO', 'Initializing Direct OAuth Flow...');
         
-        if (!apiKey || apiKey === 'GEMINI_API_KEY') {
-          return reject(new Error("未检测到 API Key。请在启动页输入具备 Earth Engine 权限的 Key。"));
-        }
-
-        console.log(`[GEE] 正在为项目 ${this.PROJECT_ID} 启动鉴权检查...`);
-
-        // 核心检查：如果库中没有 setApiKey，尝试使用底层 setAuthToken
-        if (ee.data && typeof ee.data.setApiKey === 'function') {
-          ee.data.setApiKey(apiKey);
-        } else if (ee.data && typeof ee.data.setAuthToken === 'function') {
-          // 备选方案：将 API Key 作为 Token 注入（部分旧版库或特定环境）
-          // API Key 在 GEE 后端通常可以通过特定的 token 字段传递
-          ee.data.setAuthToken(null, 'Bearer', apiKey, 3600, [], null, false);
-        } else {
-          console.warn("[GEE] 当前版本的 GEE 库不支持 setApiKey，将尝试直接初始化...");
-        }
-
-        // 落实项目 ID 绑定
-        if (ee.data && typeof ee.data.setProject === 'function') {
-          ee.data.setProject(this.PROJECT_ID);
-        }
-
-        // 初始化引擎
-        // 在 API Key 模式下，通常使用默认端点
-        ee.initialize(
-          null, 
-          null,
-          () => {
-            this.initialized = true;
-            console.log(`[GEE] 引擎就绪。项目: ${this.PROJECT_NAME} (${this.PROJECT_ID})`);
-            resolve();
-          },
-          (err: any) => {
-            console.error("[GEE] 初始化异常:", err);
-            const errorStr = err.toString();
-            if (errorStr.includes("401") || errorStr.includes("credential") || errorStr.includes("OAuth") || errorStr.includes("authenticated")) {
-              reject(new Error(`认证失败：请确认 API Key 具备 Earth Engine 访问权限，且项目 [${this.PROJECT_ID}] 已注册及启用 API。`));
-            } else {
-              reject(new Error(`GEE 初始化失败: ${err}`));
+        const tokenClient = window.google.accounts.oauth2.initTokenClient({
+          client_id: clientId,
+          // Added 'openid profile email' to reduce "Invalid Request" errors related to unverified apps
+          scope: 'https://www.googleapis.com/auth/earthengine openid profile email',
+          callback: (response: any) => {
+            if (response.error) {
+              reject(new Error(`OAuth Error: ${response.error}`));
+              return;
             }
-          }
-        );
-      } catch (e) {
-        reject(e);
+
+            if (response.access_token) {
+              SentinelService.log('INFO', 'Access Token Received. Injecting into GEE...');
+              
+              if (ee.data.setClientId) ee.data.setClientId(clientId);
+              
+              ee.data.setAuthToken(
+                clientId, 
+                'Bearer', 
+                response.access_token, 
+                3600, 
+                [], 
+                undefined, 
+                false
+              );
+
+              // 4. Initialize Earth Engine with Project ID
+              ee.initialize(
+                null, 
+                null, 
+                () => {
+                  this.initialized = true;
+                  SentinelService.log('SUCCESS', `GEE Engine Initialized. Project: ${projectId}`);
+                  resolve();
+                }, 
+                (err: any) => {
+                   const errMsg = `GEE Init Failed: ${err?.message || err}`;
+                   SentinelService.log('ERROR', errMsg);
+                   reject(new Error(errMsg));
+                }, 
+                null, 
+                projectId
+              );
+            } else {
+              reject(new Error("Google returned no access token."));
+            }
+          },
+        });
+
+        // 5. Trigger the Popup
+        tokenClient.requestAccessToken();
+
+      } catch (e: any) {
+        reject(new Error(`Auth Setup Failed: ${e.message}`));
       }
     });
   }
 
-  static async searchSentinel2(
-    geometry: any, 
-    maxCloud: number, 
-    dateStart: string, 
-    dateEnd: string,
-    onProgress?: (msg: string) => void
-  ): Promise<SatelliteResult[]> {
-    await this.ensureInitialized();
-    
-    onProgress?.("正在同步地理围栏...");
+  static async searchSentinel2(geometry: any, maxCloud: number, dateStart: string, dateEnd: string, logger?: (m: string) => void): Promise<SatelliteResult[]> {
+    if (!this.initialized) {
+      throw new Error("Engine not initialized. Please refresh and log in.");
+    }
+
+    const ee = this.ee;
+    if (logger) logger("Sending request to Google Earth Engine...");
 
     return new Promise((resolve, reject) => {
       try {
-        let coords = geometry.geometry.coordinates;
-        if (!Array.isArray(coords[0][0])) {
-          coords = [coords]; 
+        // Construct Geometry
+        let roi;
+        try {
+            // Handle FeatureCollection or Feature or Geometry inputs
+            const coords = geometry.geometry ? geometry.geometry.coordinates : geometry.coordinates;
+            roi = ee.Geometry.Polygon(coords);
+        } catch (e) {
+            console.error("Geometry Parse Error", e);
+            throw new Error("Invalid ROI Geometry");
         }
 
-        const roi = ee.Geometry.Polygon(coords);
-        onProgress?.(`正在检索数据 (项目: ${this.PROJECT_ID})...`);
-
+        // Build Collection
         const collection = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
           .filterBounds(roi)
           .filterDate(dateStart, dateEnd)
           .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', maxCloud))
-          .sort('CLOUDY_PIXEL_PERCENTAGE');
+          .sort('CLOUDY_PIXEL_PERCENTAGE', false); // Low cloud first
 
-        onProgress?.("正在解析影像元数据...");
-        
-        collection.limit(12).evaluate((list: any, error: any) => {
+        // Execute Search (evaluate)
+        // Only fetch 15 items to prevent payload issues
+        collection.limit(15).evaluate((list: any, error: any) => {
           if (error) {
-            reject(new Error(`GEE 数据服务错误: ${error.message || error}`));
-            return;
+            console.error("GEE Eval Error:", error);
+            // Translate common GEE errors
+            let cleanError = error.message;
+            if (cleanError.includes("project not found")) cleanError = "Cloud Project ID incorrect or API disabled.";
+            if (cleanError.includes("permission denied")) cleanError = "Permission denied. Check GCP IAM roles.";
+            return reject(new Error(cleanError));
           }
 
-          if (!list || !list.features || list.features.length === 0) {
-            resolve([]);
-            return;
+          if (!list || !list.features) {
+            return resolve([]);
           }
 
-          onProgress?.(`已捕获 ${list.features.length} 景高分辨率影像...`);
+          if (logger) logger(`Processing ${list.features.length} features...`);
 
-          const results: SatelliteResult[] = list.features.map((f: any) => {
-            const props = f.properties;
-            const img = ee.Image(f.id);
-            const thumbUrl = img.getThumbURL({
-              params: 'B4,B3,B2',
-              min: 0,
-              max: 3000,
-              dimensions: 512,
-              format: 'jpg'
-            });
+          const results = list.features.map((f: any) => {
+            // Safe bounds extraction to prevent map crash
+            let bounds: number[][] = [];
+            try {
+                // GeoJSON from GEE is usually [lng, lat]. 
+                // We need to return [lat, lng] for internal logic if that's what's expected, 
+                // BUT MapView expects GeoJSON which is [lng, lat]. 
+                // Let's standardize: GeeService returns raw GeoJSON coordinates for the boundary.
+                
+                const geo = f.geometry;
+                if (geo.type === 'Polygon') {
+                   // f.geometry.coordinates is [[[lng, lat], ...]]
+                   // We convert to [lat, lng] for the thumbnail/list logic if needed, 
+                   // but usually we want to keep it simple.
+                   // Let's store [lat, lng] for the UI bounds.
+                   bounds = geo.coordinates[0].map((c: any) => [c[1], c[0]]);
+                } else if (geo.type === 'MultiPolygon') {
+                   // Just take the first polygon for the thumbnail bounds
+                   bounds = geo.coordinates[0][0].map((c: any) => [c[1], c[0]]);
+                }
+            } catch (e) {
+                console.warn("Bounds extraction failed for", f.id);
+            }
 
-            let rawCoords = f.geometry.coordinates[0];
-            if (Array.isArray(rawCoords[0][0])) rawCoords = rawCoords[0];
+            // Generate Thumbnail
+            let thumb = '';
+            try {
+                // This call is sync in JS client but generates a URL that hits Google
+                thumb = ee.Image(f.id).getThumbURL({
+                    min: 0,
+                    max: 3000,
+                    bands: ['B4', 'B3', 'B2'],
+                    dimensions: 200, // Small thumbnail
+                    format: 'jpg'
+                });
+            } catch (e) {
+                console.warn("Thumb gen failed", e);
+            }
 
             return {
               id: f.id,
-              thumbnail: thumbUrl,
-              date: new Date(props['system:time_start']).toISOString().split('T')[0],
-              cloudCover: parseFloat(props['CLOUDY_PIXEL_PERCENTAGE'].toFixed(2)),
-              tileId: props['MGRS_TILE'] || 'N/A',
-              bounds: rawCoords.map((c: any) => [c[1], c[0]]), 
-              metadata: {
-                platform: props['SPACECRAFT_NAME'] || 'Sentinel-2',
-                fullId: props['PRODUCT_ID'],
-                dataDate: new Date(props['system:time_start']).toLocaleString('zh-CN')
-              }
+              thumbnail: thumb,
+              date: f.properties['system:time_start'] ? new Date(f.properties['system:time_start']).toISOString().split('T')[0] : 'Unknown',
+              cloudCover: f.properties['CLOUDY_PIXEL_PERCENTAGE'] ? Math.round(f.properties['CLOUDY_PIXEL_PERCENTAGE'] * 100) / 100 : 0,
+              tileId: f.properties['MGRS_TILE'] || 'N/A',
+              bounds: bounds // [lat, lng] arrays
             };
           });
 
           resolve(results);
         });
       } catch (e: any) {
-        reject(e);
+        reject(new Error(`Runtime Error: ${e.message}`));
       }
     });
   }
