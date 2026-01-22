@@ -1,0 +1,7 @@
+{
+  "name": "Satellite Workbench Pro",
+  "description": "Real-world GEE production workbench with Google Maps integration and administrative division support.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}
