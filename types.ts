@@ -22,12 +22,16 @@ export interface SatelliteResult {
   cloudCover: number;
   tileId: string;
   bounds: number[][];
-  metadata?: {
-    platform: string;
-    fullId: string;
-    sunAzimuth?: number;
-    sunElevation?: number;
-    dataDate: string;
+  metadata: {
+    platform: string;           // e.g. Sentinel-2A
+    dataLevel: string;          // e.g. Level-2A (SR)
+    resolution: string;         // e.g. 10m
+    bands: string;              // e.g. B4, B3, B2 (RGB)
+    processingBaseline: string; // e.g. 05.10
+    orbitNumber: string;        // e.g. 105
+    sensingTime: string;        // Detailed timestamp
+    orbitDirection: string;     // DESCENDING / ASCENDING
+    relativeOrbit: string;      // Relative orbit number
   };
 }
 

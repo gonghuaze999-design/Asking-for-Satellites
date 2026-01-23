@@ -49,6 +49,21 @@
         .custom-scrollbar::-webkit-scrollbar-thumb:hover {
             background: #11b4d4;
         }
+        
+        /* FIX: Make Date Picker Icon White in Dark Mode */
+        ::-webkit-calendar-picker-indicator {
+            filter: invert(1);
+            opacity: 0.6;
+            cursor: pointer;
+            transition: opacity 0.2s;
+        }
+        ::-webkit-calendar-picker-indicator:hover {
+            opacity: 1;
+        }
+        /* Ensure input text is white */
+        input[type="date"] {
+            color-scheme: dark;
+        }
     </style>
 <script type="importmap">
 {

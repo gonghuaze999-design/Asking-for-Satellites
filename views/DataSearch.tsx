@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Database, Search, MousePointer2, Loader2, CheckCircle2, UploadCloud, Terminal, AlertCircle, ChevronRight, Cloud, Radio, Zap, X, Map as MapIcon, Calendar, Layers, Hash } from 'lucide-react';
+import { Database, Search, MousePointer2, Loader2, CheckCircle2, UploadCloud, Terminal, AlertCircle, ChevronRight, Cloud, Radio, Zap, X, Map as MapIcon, Calendar, Layers, Hash, Info, Target, Cpu, Compass, Activity } from 'lucide-react';
 import GoogleMapView, { GoogleMapRef } from '../components/GoogleMapView';
 import { GeeService } from '../services/GeeService';
 import { SatelliteResult } from '../types';
@@ -34,7 +34,6 @@ const DataSearch: React.FC<DataSearchProps> = ({ addTask, addLog, results, setRe
   const [processLogs, setProcessLogs] = useState<string[]>([]);
   const [authError, setAuthError] = useState<string | null>(null);
   
-  // Selection State
   const [selectedResult, setSelectedResult] = useState<SatelliteResult | null>(null);
   const [tileLoading, setTileLoading] = useState(false);
 
@@ -49,7 +48,6 @@ const DataSearch: React.FC<DataSearchProps> = ({ addTask, addLog, results, setRe
   const [districts, setDistricts] = useState<any[]>([]);
 
   const hasCurrentGeo = roiMode === 'ADMIN' ? !!selectedDist : roiMode === 'DRAW' ? !!drawGeo : !!fileGeo;
-  
   const updateProcess = (msg: string) => setProcessLogs(prev => [...prev.slice(-4), `> ${msg}`]);
 
   useEffect(() => {
@@ -100,82 +98,61 @@ const DataSearch: React.FC<DataSearchProps> = ({ addTask, addLog, results, setRe
       } else finalGeo = roiMode === 'DRAW' ? drawGeo : fileGeo;
 
       updateProcess(`ROI 锁定: 检索 Sentinel-2 (${dateStart} - ${dateEnd})`);
-
       const data = await GeeService.searchSentinel2(finalGeo, cloudCover, dateStart, dateEnd, updateProcess);
-      
       setResults(data);
       if (data.length > 0) {
         addLog('SUCCESS', `检索完成: 获取到 ${data.length} 个 Sentinel-2 影像`);
         updateProcess(`成功: ${data.length} 个结果`);
       } else {
-        addLog('INFO', '检索完成: 未找到符合条件的影像 (请尝试放宽云量或日期)');
+        addLog('INFO', '检索完成: 未找到符合条件的影像');
         updateProcess('结果: 0 条数据');
       }
     } catch (e: any) {
-      console.error(e);
       setAuthError(e.message);
       updateProcess(`致命错误: ${e.message}`);
       addLog('ERROR', `SEARCH_FAILED: ${e.message}`);
     } finally {
       updateProcess("会话结束.");
-      setTimeout(() => {
-        setLoading(false);
-      }, 2000);
+      setTimeout(() => setLoading(false), 2000);
     }
   };
 
   const handleResultClick = async (res: SatelliteResult) => {
-    // If already loading or same result, do basic check, but allow re-click to refresh
     setSelectedResult(res);
     setTileLoading(true);
-    addLog('DEBUG', `Selecting Result: ${res.id}`);
 
-    // 1. Draw Bounds
     if (res.bounds && Array.isArray(res.bounds) && res.bounds.length > 2) {
       try {
         const coords = res.bounds.map(b => [b[1], b[0]]);
-        if (coords[0][0] !== coords[coords.length-1][0] || coords[0][1] !== coords[coords.length-1][1]) {
-            coords.push(coords[0]);
-        }
-        
-        mapRef.current?.addGeoJson({ 
-          type: "Feature", 
-          geometry: { 
-            type: "Polygon", 
-            coordinates: [coords] 
-          } 
-        });
-      } catch (e) {
-        addLog('WARN', '无效的影像几何信息');
-      }
+        if (coords[0][0] !== coords[coords.length-1][0] || coords[0][1] !== coords[coords.length-1][1]) coords.push(coords[0]);
+        mapRef.current?.addGeoJson({ type: "Feature", geometry: { type: "Polygon", coordinates: [coords] } });
+      } catch (e) { addLog('WARN', '无效几何信息'); }
     }
 
-    // 2. Fetch and Overlay Tiles
     try {
         const mapIdUrl = await GeeService.getOverlayMapId(res.id);
         if (mapIdUrl) {
+            // Note: GoogleMapView.addTileLayer automatically clears previous tile layers.
+            // This ensures we switch clean to the new image, but allows the old one to stay
+            // if we just closed the inspector (because we only click here to switch).
             mapRef.current?.addTileLayer(mapIdUrl);
-            addLog('SUCCESS', `图层叠加成功: ${res.id}`);
-        } else {
-             addLog('WARN', `GEE 未返回有效的图层 URL`);
+            addLog('SUCCESS', `全分辨率图层已载入: ${res.id}`);
         }
     } catch (e: any) {
-        console.error(e);
         addLog('ERROR', `图层加载失败: ${e.message}`);
-    } finally {
-        setTileLoading(false);
-    }
+    } finally { setTileLoading(false); }
   };
 
   const closeInspector = () => {
       setSelectedResult(null);
-      mapRef.current?.clearOverlays();
+      // CRITICAL CHANGE: We DO NOT clear overlays here. 
+      // This allows the user to see the map unobstructed by the panel.
+      // The overlay will only be cleared when a new search runs or a new result is selected.
   };
 
   return (
     <div className="flex flex-1 overflow-hidden h-full">
       <aside className="w-[340px] border-r border-white/5 bg-[#14161c] flex flex-col shrink-0 z-20 overflow-hidden">
-        {/* Fixed Top Section */}
         <div className="p-4 border-b border-white/5 bg-black/10 shrink-0">
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-[10px] font-black uppercase tracking-widest text-primary flex items-center gap-2"><Database size={12} /> Data Center</h2>
@@ -211,173 +188,113 @@ const DataSearch: React.FC<DataSearchProps> = ({ addTask, addLog, results, setRe
                 </div>
               </div>
             )}
-            {roiMode === 'DRAW' && (
-              <div className="bg-black/20 border border-dashed border-white/10 rounded-xl p-3 text-center">
-                <p className="text-[8px] text-slate-500 uppercase font-black">使用地图上方绘图工具</p>
-                {drawGeo && <div className="mt-1 text-[8px] text-emerald-400 font-bold uppercase">ROI Ready</div>}
-              </div>
-            )}
-            {roiMode === 'FILE' && (
-              <label className="bg-black/20 border border-dashed border-white/10 rounded-xl p-3 text-center flex flex-col items-center gap-1 cursor-pointer hover:border-primary transition-all">
-                <UploadCloud size={14} className="text-slate-500" />
-                <span className="text-[8px] font-black text-slate-400 uppercase">LOAD .GEOJSON</span>
-                <input type="file" className="hidden" accept=".json,.geojson" onChange={e => {
-                  const file = e.target.files?.[0];
-                  if (!file) return;
-                  const reader = new FileReader();
-                  reader.onload = ev => { const json = JSON.parse(ev.target?.result as string); setFileGeo(json); mapRef.current?.addGeoJson(json); };
-                  reader.readAsText(file);
-                }} />
-              </label>
-            )}
+            {roiMode === 'DRAW' && <div className="bg-black/20 border border-dashed border-white/10 rounded-xl p-3 text-center"><p className="text-[8px] text-slate-500 uppercase font-black">使用地图上方绘图工具</p>{drawGeo && <div className="mt-1 text-[8px] text-emerald-400 font-bold uppercase">ROI Ready</div>}</div>}
+            {roiMode === 'FILE' && <label className="bg-black/20 border border-dashed border-white/10 rounded-xl p-3 text-center flex flex-col items-center gap-1 cursor-pointer hover:border-primary transition-all"><UploadCloud size={14} className="text-slate-500" /><span className="text-[8px] font-black text-slate-400 uppercase">LOAD .GEOJSON</span><input type="file" className="hidden" accept=".json,.geojson" onChange={e => { const file = e.target.files?.[0]; if (!file) return; const reader = new FileReader(); reader.onload = ev => { const json = JSON.parse(ev.target?.result as string); setFileGeo(json); mapRef.current?.addGeoJson(json); }; reader.readAsText(file); }} /></label>}
           </div>
 
           <div className="space-y-3">
-            <div className="space-y-1">
-              <div className="flex items-center justify-between text-[8px] font-black uppercase tracking-widest text-slate-500">
-                <div className="flex items-center gap-1.5"><Cloud size={10} /> Cloud {cloudCover}%</div>
-              </div>
-              <input type="range" min="0" max="100" value={cloudCover} onChange={e => setCloudCover(parseInt(e.target.value))} className="w-full h-1 bg-black/40 rounded-lg appearance-none cursor-pointer accent-primary" />
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <input type="date" value={dateStart} onChange={e => setDateStart(e.target.value)} className="w-full bg-black/40 border border-white/5 rounded-lg text-[9px] py-2 px-2 text-slate-300 outline-none" />
-              <input type="date" value={dateEnd} onChange={e => setDateEnd(e.target.value)} className="w-full bg-black/40 border border-white/5 rounded-lg text-[9px] py-2 px-2 text-slate-300 outline-none" />
-            </div>
-            <button onClick={handleSearch} disabled={loading || !hasCurrentGeo} className="w-full bg-primary text-black font-black text-[10px] uppercase tracking-widest py-3 rounded-xl flex items-center justify-center gap-2 disabled:opacity-20 hover:scale-[1.01] transition-all">
-              {loading ? <Loader2 className="animate-spin" size={12} /> : <Search size={12} />} Launch Retrieval
-            </button>
+            <div className="space-y-1"><div className="flex items-center justify-between text-[8px] font-black uppercase tracking-widest text-slate-500"><div className="flex items-center gap-1.5"><Cloud size={10} /> Cloud {cloudCover}%</div></div><input type="range" min="0" max="100" value={cloudCover} onChange={e => setCloudCover(parseInt(e.target.value))} className="w-full h-1 bg-black/40 rounded-lg appearance-none cursor-pointer accent-primary" /></div>
+            <div className="grid grid-cols-2 gap-2"><input type="date" value={dateStart} onChange={e => setDateStart(e.target.value)} className="w-full bg-black/40 border border-white/5 rounded-lg text-[9px] py-2 px-2 text-slate-300 outline-none" /><input type="date" value={dateEnd} onChange={e => setDateEnd(e.target.value)} className="w-full bg-black/40 border border-white/5 rounded-lg text-[9px] py-2 px-2 text-slate-300 outline-none" /></div>
+            <button onClick={handleSearch} disabled={loading || !hasCurrentGeo} className="w-full bg-primary text-black font-black text-[10px] uppercase tracking-widest py-3 rounded-xl flex items-center justify-center gap-2 disabled:opacity-20 hover:scale-[1.01] transition-all">{loading ? <Loader2 className="animate-spin" size={12} /> : <Search size={12} />} Launch Retrieval</button>
           </div>
         </div>
 
-        {/* Scrollable Results Section */}
         <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-4">
-          {authError && (
-             <div className="p-4 bg-rose-500/10 border border-rose-500/20 rounded-xl space-y-2">
-                <div className="flex items-center gap-2 text-rose-500">
-                  <AlertCircle size={14} />
-                  <span className="text-[10px] font-black uppercase tracking-widest">Error</span>
-                </div>
-                <p className="text-[9px] text-rose-300 font-mono leading-relaxed">{authError}</p>
-             </div>
-          )}
-
+          {authError && <div className="p-4 bg-rose-500/10 border border-rose-500/20 rounded-xl space-y-2"><div className="flex items-center gap-2 text-rose-500"><AlertCircle size={14} /><span className="text-[10px] font-black uppercase tracking-widest">Error</span></div><p className="text-[9px] text-rose-300 font-mono leading-relaxed">{authError}</p></div>}
           {results.length > 0 ? (
             <div className="space-y-2">
-              <h3 className="text-[8px] font-black text-slate-500 uppercase tracking-widest ml-1">REAL DATA ({results.length})</h3>
+              <h3 className="text-[8px] font-black text-slate-500 uppercase tracking-widest ml-1">MATCHED IMAGERY ({results.length})</h3>
               <div className="grid grid-cols-1 gap-2">
                 {results.map((res) => (
                   <div key={res.id} onClick={() => handleResultClick(res)} className={`group bg-black/20 border rounded-xl overflow-hidden cursor-pointer flex h-14 transition-all ${selectedResult?.id === res.id ? 'border-primary shadow-[0_0_10px_rgba(17,180,212,0.1)]' : 'border-white/5 hover:border-white/10'}`}>
-                    <div className="w-14 bg-black shrink-0 relative">
-                        {res.thumbnail ? (
-                            <img src={res.thumbnail} className="w-full h-full object-cover group-hover:opacity-100" referrerPolicy="no-referrer" />
-                        ) : (
-                            <div className="w-full h-full flex items-center justify-center bg-slate-800 text-slate-500 text-[8px]">NO IMG</div>
-                        )}
-                        {/* Status Overlay */}
-                        {(selectedResult?.id === res.id) && (
-                           <div className="absolute inset-0 bg-primary/20 flex items-center justify-center backdrop-blur-[1px]">
-                              {tileLoading ? <Loader2 size={12} className="animate-spin text-white" /> : <MapIcon size={12} className="text-white drop-shadow-md" />}
-                           </div>
-                        )}
-                    </div>
-                    <div className="flex-1 p-2 flex flex-col justify-center min-w-0">
-                      <div className="flex justify-between items-center mb-0.5">
-                        <p className="text-[9px] font-bold text-slate-300">{res.date}</p>
-                        <span className="text-[8px] font-black text-primary/80">C:{res.cloudCover}%</span>
-                      </div>
-                      <p className="text-[7px] font-mono text-slate-600 truncate uppercase" title={res.id}>{res.id.split('/').pop()}</p>
-                    </div>
+                    <div className="w-14 bg-black shrink-0 relative">{res.thumbnail ? <img src={res.thumbnail} className="w-full h-full object-cover group-hover:opacity-100" referrerPolicy="no-referrer" /> : <div className="w-full h-full flex items-center justify-center bg-slate-800 text-slate-500 text-[8px]">NO IMG</div>}{selectedResult?.id === res.id && <div className="absolute inset-0 bg-primary/20 flex items-center justify-center backdrop-blur-[1px]">{tileLoading ? <Loader2 size={12} className="animate-spin text-white" /> : <MapIcon size={12} className="text-white drop-shadow-md" />}</div>}</div>
+                    <div className="flex-1 p-2 flex flex-col justify-center min-w-0"><div className="flex justify-between items-center mb-0.5"><p className="text-[9px] font-bold text-slate-300">{res.date}</p><span className="text-[8px] font-black text-primary/80">C:{res.cloudCover}%</span></div><p className="text-[7px] font-mono text-slate-600 truncate uppercase" title={res.id}>{res.id.split('/').pop()}</p></div>
                   </div>
                 ))}
               </div>
             </div>
-          ) : !loading && !authError && (
-            <div className="h-full flex flex-col items-center justify-center opacity-20 py-10">
-              <Database size={32} />
-              <p className="text-[8px] font-black uppercase mt-2">No Data</p>
-            </div>
-          )}
+          ) : !loading && !authError && <div className="h-full flex flex-col items-center justify-center opacity-20 py-10"><Database size={32} /><p className="text-[8px] font-black uppercase mt-2">No Data</p></div>}
         </div>
       </aside>
 
       <main className="flex-1 relative bg-black">
         <GoogleMapView ref={mapRef} showDrawingTools={roiMode === 'DRAW'} onGeometryChange={setDrawGeo} />
-        
-        {/* Loading Overlay */}
         {loading && (
           <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-[280px]">
             <div className="bg-[#14161c]/90 backdrop-blur-xl border border-white/10 p-5 rounded-[24px] shadow-2xl space-y-3">
-              <div className="flex items-center justify-between">
-                <h3 className="text-[9px] font-black uppercase tracking-widest text-primary flex items-center gap-2"><Terminal size={12} /> GEE Pipeline</h3>
-                <Loader2 className="animate-spin text-primary" size={12} />
-              </div>
-              <div className="space-y-1 bg-black/40 p-2 rounded-lg">
-                {processLogs.map((log, i) => (
-                  <div key={i} className={`flex items-start gap-2 text-[8px] font-mono ${log.includes('错误') || log.includes('失败') ? 'text-rose-400' : 'text-slate-500'}`}>
-                    <ChevronRight size={8} className="mt-0.5 shrink-0" /> <span className="truncate">{log}</span>
-                  </div>
-                ))}
-              </div>
+              <div className="flex items-center justify-between"><h3 className="text-[9px] font-black uppercase tracking-widest text-primary flex items-center gap-2"><Terminal size={12} /> GEE Pipeline</h3><Loader2 className="animate-spin text-primary" size={12} /></div>
+              <div className="space-y-1 bg-black/40 p-2 rounded-lg">{processLogs.map((log, i) => <div key={i} className={`flex items-start gap-2 text-[8px] font-mono ${log.includes('错误') || log.includes('失败') ? 'text-rose-400' : 'text-slate-500'}`}><ChevronRight size={8} className="mt-0.5 shrink-0" /> <span className="truncate">{log}</span></div>)}</div>
             </div>
           </div>
         )}
 
-        {/* Detailed Info Panel (Inspector) */}
         {selectedResult && !loading && (
-          <div className="absolute top-6 right-6 w-72 bg-[#14161c]/95 backdrop-blur-md border border-white/10 rounded-[24px] shadow-2xl overflow-hidden animate-in slide-in-from-right-4 duration-300">
-             <div className="p-4 border-b border-white/5 flex items-start justify-between">
-                <div>
-                   <h3 className="text-[10px] font-black uppercase tracking-widest text-primary flex items-center gap-1.5"><Layers size={12} /> Image Inspector</h3>
-                   <p className="text-[9px] text-slate-500 font-mono mt-0.5 truncate max-w-[180px]">{selectedResult.id}</p>
+          <div className="absolute top-6 right-6 w-80 bg-[#14161c]/95 backdrop-blur-md border border-white/10 rounded-[24px] shadow-2xl overflow-hidden animate-in slide-in-from-right-4 duration-300">
+             <div className="p-4 border-b border-white/5 flex items-start justify-between bg-white/5">
+                <div className="flex items-center gap-3">
+                   <div className="p-2 bg-primary/10 rounded-lg text-primary"><Info size={16} /></div>
+                   <div><h3 className="text-[10px] font-black uppercase tracking-widest text-white">Image Inspector</h3><p className="text-[8px] text-slate-500 font-mono mt-0.5">MGRS: {selectedResult.tileId}</p></div>
                 </div>
-                <button onClick={closeInspector} className="text-slate-500 hover:text-white transition-colors"><X size={14} /></button>
+                <button onClick={closeInspector} className="text-slate-500 hover:text-white transition-colors p-1"><X size={16} /></button>
              </div>
              
              <div className="p-4 space-y-4">
                 <div className="grid grid-cols-2 gap-3">
                    <div className="bg-black/40 p-3 rounded-xl border border-white/5">
-                      <div className="flex items-center gap-2 text-slate-500 mb-1">
-                         <Calendar size={10} />
-                         <span className="text-[8px] font-black uppercase tracking-widest">Acquisition</span>
-                      </div>
-                      <p className="text-sm font-bold text-slate-200">{selectedResult.date}</p>
+                      <div className="flex items-center gap-2 text-slate-500 mb-1"><Calendar size={10} /><span className="text-[8px] font-black uppercase tracking-widest">Sensing Time</span></div>
+                      <p className="text-[10px] font-bold text-slate-200">{selectedResult.metadata.sensingTime}</p>
                    </div>
                    <div className="bg-black/40 p-3 rounded-xl border border-white/5">
-                      <div className="flex items-center gap-2 text-slate-500 mb-1">
-                         <Cloud size={10} />
-                         <span className="text-[8px] font-black uppercase tracking-widest">Cloud Cover</span>
-                      </div>
-                      <p className="text-sm font-bold text-emerald-400">{selectedResult.cloudCover}%</p>
+                      <div className="flex items-center gap-2 text-slate-500 mb-1"><Cloud size={10} /><span className="text-[8px] font-black uppercase tracking-widest">Cloud Density</span></div>
+                      <p className="text-[10px] font-bold text-emerald-400">{selectedResult.cloudCover}%</p>
                    </div>
                 </div>
 
-                <div className="bg-black/40 p-3 rounded-xl border border-white/5">
-                    <div className="flex items-center gap-2 text-slate-500 mb-1">
-                        <Hash size={10} />
-                        <span className="text-[8px] font-black uppercase tracking-widest">MGRS Tile</span>
+                <div className="bg-black/40 p-3 rounded-xl border border-white/5 space-y-2.5">
+                    <div className="flex items-center justify-between border-b border-white/5 pb-2">
+                        <div className="flex items-center gap-2 text-slate-500"><Target size={10} /><span className="text-[8px] font-black uppercase tracking-widest">Platform</span></div>
+                        <span className="text-[9px] font-bold text-primary">{selectedResult.metadata.platform}</span>
                     </div>
-                    <p className="text-xs font-mono text-slate-300">{selectedResult.tileId || 'N/A'}</p>
+                    <div className="flex items-center justify-between border-b border-white/5 pb-2">
+                        <div className="flex items-center gap-2 text-slate-500"><Layers size={10} /><span className="text-[8px] font-black uppercase tracking-widest">Data Level</span></div>
+                        <span className="text-[9px] font-bold text-white">{selectedResult.metadata.dataLevel}</span>
+                    </div>
+                    <div className="flex items-center justify-between border-b border-white/5 pb-2">
+                        <div className="flex items-center gap-2 text-slate-500"><Cpu size={10} /><span className="text-[8px] font-black uppercase tracking-widest">Resolution</span></div>
+                        <span className="text-[9px] font-bold text-emerald-400">{selectedResult.metadata.resolution}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2 text-slate-500"><Radio size={10} /><span className="text-[8px] font-black uppercase tracking-widest">Spectral Bands</span></div>
+                        <span className="text-[9px] font-bold text-white">{selectedResult.metadata.bands}</span>
+                    </div>
                 </div>
 
-                <div className="space-y-2">
-                   <p className="text-[8px] font-black uppercase tracking-widest text-slate-500">Visualization</p>
-                   <div className="flex items-center justify-between bg-black/40 p-2 rounded-lg border border-white/5">
-                      <div className="flex items-center gap-2">
-                         <div className="size-2 rounded-full bg-red-500" />
-                         <div className="size-2 rounded-full bg-green-500" />
-                         <div className="size-2 rounded-full bg-blue-500" />
-                         <span className="text-[9px] text-slate-300 font-bold">RGB (True Color)</span>
+                <div className="p-3 rounded-xl bg-black/40 border border-white/5">
+                   <p className="text-[8px] font-black uppercase tracking-widest text-slate-500 mb-2">Satellite Trajectory</p>
+                   <div className="grid grid-cols-2 gap-y-2">
+                      <div className="flex flex-col">
+                         <span className="text-[7px] text-slate-500 uppercase font-black">Orbit Dir</span>
+                         <span className="text-[9px] font-mono text-slate-300 flex items-center gap-1"><Compass size={8} /> {selectedResult.metadata.orbitDirection}</span>
                       </div>
-                      <span className="text-[8px] text-slate-500 font-mono">B4,B3,B2</span>
+                      <div className="flex flex-col">
+                         <span className="text-[7px] text-slate-500 uppercase font-black">Rel Orbit</span>
+                         <span className="text-[9px] font-mono text-slate-300 flex items-center gap-1"><Activity size={8} /> #{selectedResult.metadata.relativeOrbit}</span>
+                      </div>
+                      <div className="flex flex-col">
+                         <span className="text-[7px] text-slate-500 uppercase font-black">Processing Baseline</span>
+                         <span className="text-[9px] font-mono text-slate-300">{selectedResult.metadata.processingBaseline}</span>
+                      </div>
                    </div>
                 </div>
-
-                <button 
-                  onClick={() => addTask(`Export ${selectedResult.id}`, 'DRIVE_EXPORT')}
-                  className="w-full bg-white hover:bg-slate-200 text-black font-black text-[9px] uppercase tracking-widest py-3 rounded-xl transition-colors flex items-center justify-center gap-2"
-                >
-                   <UploadCloud size={12} /> Export to Drive
-                </button>
+                
+                <div className="pt-1">
+                   <div className="flex items-center gap-2 p-2.5 bg-blue-500/10 border border-blue-500/20 rounded-xl">
+                      <Zap size={10} className="text-blue-400 shrink-0" />
+                      <p className="text-[8px] text-blue-300 uppercase leading-relaxed font-bold">
+                        Zoom on map to inspect 10m Ground Sample Distance (GSD). GEE dynamically handles multi-scale resampling.
+                      </p>
+                   </div>
+                </div>
              </div>
           </div>
         )}
