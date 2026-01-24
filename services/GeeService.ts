@@ -61,12 +61,12 @@ export class GeeService {
   }
 
   /**
-   * 生成单张影像的本地下载链接（增强版文件名）
+   * Generates a GEE download URL and the expected fileName
    */
   static async generateSingleLocalUrl(
     imageId: string, 
     sensingDate: string,
-    algoName: string, 
+    algoId: string, 
     geometry: any, 
     experimentName: string
   ): Promise<{url: string, fileName: string}> {
@@ -78,14 +78,25 @@ export class GeeService {
 
     const img = ee.Image(imageId);
     let result = img.select(['B4', 'B3', 'B2']);
-    const upAlgo = algoName.toUpperCase();
-    if (upAlgo.includes('NDVI')) result = img.normalizedDifference(['B8', 'B4']).rename('NDVI');
-    else if (upAlgo.includes('NDWI')) result = img.normalizedDifference(['B3', 'B8']).rename('NDWI');
+    
+    // Index Calculation Mapping
+    const upAlgo = algoId.toUpperCase();
+    if (upAlgo.includes('NDVI')) {
+      result = img.normalizedDifference(['B8', 'B4']).rename('NDVI');
+    } else if (upAlgo.includes('NDWI')) {
+      result = img.normalizedDifference(['B3', 'B8']).rename('NDWI');
+    } else if (upAlgo.includes('VEG_MASK')) {
+      const ndvi = img.normalizedDifference(['B8', 'B4']);
+      result = ndvi.updateMask(ndvi.gt(0.4)).rename('VegMask');
+    }
 
-    // 生成时间序列友好的文件名: [实验名]_[感应日期]_[影像短ID]
-    const shortId = imageId.split('/').pop() || 'img';
-    const cleanDate = sensingDate.replace(/[:T]/g, '-');
-    const fileName = `${experimentName}_${cleanDate}_${shortId}`.replace(/[^a-zA-Z0-9_-]/g, '_');
+    // STRICT FILENAME ENFORCEMENT
+    const shortId = imageId.split('/').pop() || 'IMG';
+    // Format: YYYYMMDD
+    const cleanDate = sensingDate.split('T')[0].replace(/-/g, '').substring(0, 8);
+    // Remove non-alphanumeric chars
+    const cleanExp = experimentName.replace(/[^a-zA-Z0-9]/g, '_').toUpperCase();
+    const fileName = `${cleanExp}_${cleanDate}_${shortId}`;
 
     return new Promise((resolve, reject) => {
         result.clip(roi).getDownloadURL({
@@ -155,7 +166,7 @@ export class GeeService {
 
   static async startBatchExport(
     imageIds: string[], 
-    algoName: string, 
+    algoId: string, 
     geometry: any, 
     type: string, 
     taskPrefix: string,
@@ -182,7 +193,7 @@ export class GeeService {
         onStepLog?.(`Building Kernel for: ${safeId}`);
 
         const rawImg = ee.Image(id);
-        const upAlgo = algoName.toUpperCase();
+        const upAlgo = algoId.toUpperCase();
         let processedImg = rawImg.select(['B4', 'B3', 'B2']);
         if (upAlgo.includes('NDVI')) processedImg = rawImg.normalizedDifference(['B8', 'B4']).rename('NDVI');
         else if (upAlgo.includes('NDWI')) processedImg = rawImg.normalizedDifference(['B3', 'B8']).rename('NDWI');

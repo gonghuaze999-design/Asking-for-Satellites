@@ -9,9 +9,9 @@ declare const google: any;
 
 const ADMIN_FALLBACK: any[] = [
   { 
-    code: '11', name: '北京市', 
-    children: [{ code: '1101', name: '市辖区', children: [
-      { code: '110101', name: '东城区' }, { code: '110102', name: '西城区' }, { code: '110105', name: '朝阳区' }
+    code: '11', name: 'Beijing', 
+    children: [{ code: '1101', name: 'Metropolitan Area', children: [
+      { code: '110101', name: 'Dongcheng' }, { code: '110102', name: 'Xicheng' }, { code: '110105', name: 'Chaoyang' }
     ]}]
   }
 ];
@@ -21,7 +21,7 @@ interface DataSearchProps {
   addLog: (level: any, msg: string, payload?: any) => void;
   results: SatelliteResult[];
   setResults: (results: SatelliteResult[]) => void;
-  onRoiChange: (roi: any) => void; // New callback
+  onRoiChange: (roi: any) => void;
 }
 
 const DataSearch: React.FC<DataSearchProps> = ({ addTask, addLog, results, setResults, onRoiChange }) => {
@@ -55,10 +55,9 @@ const DataSearch: React.FC<DataSearchProps> = ({ addTask, addLog, results, setRe
     fetch('https://unpkg.com/china-division/dist/pca-code.json')
       .then(r => r.ok ? r.json() : null)
       .then(data => data && setDivisions(data))
-      .catch(() => addLog('WARN', '行政数据库载入离线模式'));
+      .catch(() => addLog('WARN', 'Administrative database in offline mode'));
   }, []);
 
-  // Update Global ROI whenever state changes
   useEffect(() => {
     if (roiMode === 'DRAW') onRoiChange(drawGeo);
     if (roiMode === 'FILE') onRoiChange(fileGeo);
@@ -67,7 +66,7 @@ const DataSearch: React.FC<DataSearchProps> = ({ addTask, addLog, results, setRe
   const geocodeAdmin = async (names: string[]): Promise<any> => {
     return new Promise((resolve, reject) => {
       const address = names.join('');
-      updateProcess(`解析地址: ${address}`);
+      updateProcess(`Resolving Address: ${address}`);
       const geocoder = new google.maps.Geocoder();
       geocoder.geocode({ address: address, componentRestrictions: { country: 'CN' } }, (res: any, status: any) => {
         if (status === 'OK' && res[0]) {
@@ -82,9 +81,9 @@ const DataSearch: React.FC<DataSearchProps> = ({ addTask, addLog, results, setRe
               coordinates: [[[sw.lng(), sw.lat()], [ne.lng(), sw.lat()], [ne.lng(), ne.lat()], [sw.lng(), ne.lat()], [sw.lng(), sw.lat()]]]
             }
           };
-          onRoiChange(geo); // Sync admin ROI
+          onRoiChange(geo);
           resolve(geo);
-        } else reject(new Error(`地址编码失败: ${status}`));
+        } else reject(new Error(`Geocoding failed: ${status}`));
       });
     });
   };
@@ -92,7 +91,7 @@ const DataSearch: React.FC<DataSearchProps> = ({ addTask, addLog, results, setRe
   const handleSearch = async () => {
     setLoading(true);
     setAuthError(null);
-    setProcessLogs(["初始化 GEE 通讯..."]);
+    setProcessLogs(["Initializing GEE comms..."]);
     setResults([]);
     setSelectedResult(null);
     mapRef.current?.clearOverlays();
@@ -106,22 +105,22 @@ const DataSearch: React.FC<DataSearchProps> = ({ addTask, addLog, results, setRe
         finalGeo = await geocodeAdmin([pName, cName, dName]);
       } else finalGeo = roiMode === 'DRAW' ? drawGeo : fileGeo;
 
-      updateProcess(`ROI 锁定: 检索 Sentinel-2 (${dateStart} - ${dateEnd})`);
+      updateProcess(`ROI Locked: Fetching Sentinel-2 (${dateStart} - ${dateEnd})`);
       const data = await GeeService.searchSentinel2(finalGeo, cloudCover, dateStart, dateEnd, updateProcess);
       setResults(data);
       if (data.length > 0) {
-        addLog('SUCCESS', `检索完成: 获取到 ${data.length} 个 Sentinel-2 影像`);
-        updateProcess(`成功: ${data.length} 个结果`);
+        addLog('SUCCESS', `Search finished: Found ${data.length} Sentinel-2 scenes`);
+        updateProcess(`Success: ${data.length} results`);
       } else {
-        addLog('INFO', '检索完成: 未找到符合条件的影像');
-        updateProcess('结果: 0 条数据');
+        addLog('INFO', 'Search finished: No matching scenes found');
+        updateProcess('Result: 0 records found');
       }
     } catch (e: any) {
       setAuthError(e.message);
-      updateProcess(`致命错误: ${e.message}`);
+      updateProcess(`Critical Error: ${e.message}`);
       addLog('ERROR', `SEARCH_FAILED: ${e.message}`);
     } finally {
-      updateProcess("会话结束.");
+      updateProcess("Session ended.");
       setTimeout(() => setLoading(false), 2000);
     }
   };
@@ -135,17 +134,17 @@ const DataSearch: React.FC<DataSearchProps> = ({ addTask, addLog, results, setRe
         const coords = res.bounds.map(b => [b[1], b[0]]);
         if (coords[0][0] !== coords[coords.length-1][0] || coords[0][1] !== coords[coords.length-1][1]) coords.push(coords[0]);
         mapRef.current?.addGeoJson({ type: "Feature", geometry: { type: "Polygon", coordinates: [coords] } });
-      } catch (e) { addLog('WARN', '无效几何信息'); }
+      } catch (e) { addLog('WARN', 'Invalid geometry information'); }
     }
 
     try {
         const mapIdUrl = await GeeService.getOverlayMapId(res.id);
         if (mapIdUrl) {
             mapRef.current?.addTileLayer(mapIdUrl);
-            addLog('SUCCESS', `全分辨率图层已载入: ${res.id}`);
+            addLog('SUCCESS', `High-res layer loaded: ${res.id}`);
         }
     } catch (e: any) {
-        addLog('ERROR', `图层加载失败: ${e.message}`);
+        addLog('ERROR', `Layer load failed: ${e.message}`);
     } finally { setTileLoading(false); }
   };
 
@@ -177,7 +176,7 @@ const DataSearch: React.FC<DataSearchProps> = ({ addTask, addLog, results, setRe
           <div className="flex bg-black/40 p-1 rounded-xl border border-white/5 mb-4">
             {['ADMIN', 'DRAW', 'FILE'].map(m => (
               <button key={m} onClick={() => { setRoiMode(m as any); mapRef.current?.clearOverlays(); }} className={`flex-1 py-1.5 text-[8px] font-black rounded-lg transition-all uppercase tracking-widest ${roiMode === m ? 'bg-primary text-black' : 'text-slate-500'}`}>
-                {m === 'ADMIN' ? '区划' : m === 'DRAW' ? '框选' : '文件'}
+                {m === 'ADMIN' ? 'Division' : m === 'DRAW' ? 'Sketch' : 'Files'}
               </button>
             ))}
           </div>
@@ -189,19 +188,19 @@ const DataSearch: React.FC<DataSearchProps> = ({ addTask, addLog, results, setRe
                   setSelectedProv(e.target.value); setSelectedCity(''); setSelectedDist('');
                   setCities(divisions.find(d => d.code === e.target.value)?.children || []);
                 }} className="w-full bg-black/40 border border-white/5 rounded-lg text-[10px] py-2 px-3 text-slate-300 outline-none">
-                  <option value="">省份</option>
+                  <option value="">Province / State</option>
                   {divisions.map(d => <option key={d.code} value={d.code}>{d.name}</option>)}
                 </select>
                 <div className="grid grid-cols-2 gap-2">
                   <select disabled={!selectedProv} value={selectedCity} onChange={e => {
                     setSelectedCity(e.target.value); setSelectedDist('');
                     setDistricts(cities.find(c => c.code === e.target.value)?.children || []);
-                  }} className="bg-black/40 border border-white/5 rounded-lg text-[10px] py-2 px-3 text-slate-300 disabled:opacity-30 outline-none"><option value="">城市</option>{cities.map(c => <option key={c.code} value={c.code}>{c.name}</option>)}</select>
-                  <select disabled={!selectedCity} value={selectedDist} onChange={e => setSelectedDist(e.target.value)} className="bg-black/40 border border-white/5 rounded-lg text-[10px] py-2 px-3 text-slate-300 disabled:opacity-30 outline-none"><option value="">区县</option>{districts.map(d => <option key={d.code} value={d.code}>{d.name}</option>)}</select>
+                  }} className="bg-black/40 border border-white/5 rounded-lg text-[10px] py-2 px-3 text-slate-300 disabled:opacity-30 outline-none"><option value="">City</option>{cities.map(c => <option key={c.code} value={c.code}>{c.name}</option>)}</select>
+                  <select disabled={!selectedCity} value={selectedDist} onChange={e => setSelectedDist(e.target.value)} className="bg-black/40 border border-white/5 rounded-lg text-[10px] py-2 px-3 text-slate-300 disabled:opacity-30 outline-none"><option value="">District</option>{districts.map(d => <option key={d.code} value={d.code}>{d.name}</option>)}</select>
                 </div>
               </div>
             )}
-            {roiMode === 'DRAW' && <div className="bg-black/20 border border-dashed border-white/10 rounded-xl p-3 text-center"><p className="text-[8px] text-slate-500 uppercase font-black">使用地图上方绘图工具</p>{drawGeo && <div className="mt-1 text-[8px] text-emerald-400 font-bold uppercase">ROI Ready</div>}</div>}
+            {roiMode === 'DRAW' && <div className="bg-black/20 border border-dashed border-white/10 rounded-xl p-3 text-center"><p className="text-[8px] text-slate-500 uppercase font-black">Use drawing tools on top map</p>{drawGeo && <div className="mt-1 text-[8px] text-emerald-400 font-bold uppercase">ROI Ready</div>}</div>}
             {roiMode === 'FILE' && <label className="bg-black/20 border border-dashed border-white/10 rounded-xl p-3 text-center flex flex-col items-center gap-1 cursor-pointer hover:border-primary transition-all"><UploadCloud size={14} className="text-slate-500" /><span className="text-[8px] font-black text-slate-400 uppercase">LOAD .GEOJSON</span><input type="file" className="hidden" accept=".json,.geojson" onChange={e => { const file = e.target.files?.[0]; if (!file) return; const reader = new FileReader(); reader.onload = ev => { const json = JSON.parse(ev.target?.result as string); setFileGeo(json); mapRef.current?.addGeoJson(json); }; reader.readAsText(file); }} /></label>}
           </div>
 
@@ -243,7 +242,7 @@ const DataSearch: React.FC<DataSearchProps> = ({ addTask, addLog, results, setRe
           <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-[280px]">
             <div className="bg-[#14161c]/90 backdrop-blur-xl border border-white/10 p-5 rounded-[24px] shadow-2xl space-y-3">
               <div className="flex items-center justify-between"><h3 className="text-[9px] font-black uppercase tracking-widest text-primary flex items-center gap-2"><Terminal size={12} /> GEE Pipeline</h3><Loader2 className="animate-spin text-primary" size={12} /></div>
-              <div className="space-y-1 bg-black/40 p-2 rounded-lg">{processLogs.map((log, i) => <div key={i} className={`flex items-start gap-2 text-[8px] font-mono ${log.includes('错误') || log.includes('失败') ? 'text-rose-400' : 'text-slate-500'}`}><ChevronRight size={8} className="mt-0.5 shrink-0" /> <span className="truncate">{log}</span></div>)}</div>
+              <div className="space-y-1 bg-black/40 p-2 rounded-lg">{processLogs.map((log, i) => <div key={i} className={`flex items-start gap-2 text-[8px] font-mono ${log.includes('Error') || log.includes('Failed') ? 'text-rose-400' : 'text-slate-500'}`}><ChevronRight size={8} className="mt-0.5 shrink-0" /> <span className="truncate">{log}</span></div>)}</div>
             </div>
           </div>
         )}

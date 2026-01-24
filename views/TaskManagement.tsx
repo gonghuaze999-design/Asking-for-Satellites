@@ -1,8 +1,22 @@
 
-import React, { useState, useEffect, useCallback } from 'react';
-import { Play, Database, Save, Code2, LayoutTemplate, Settings, CheckCircle2, Terminal, Cpu, FileCode, Loader2, Trash2, Activity, ChevronDown, ChevronUp, Layers, Info, Trash, LayoutGrid, PackageCheck, History, BarChart3, Clock, ArrowRightLeft, Target } from 'lucide-react';
-import { Task, SatelliteResult, AppTab } from '../types';
+import React, { useState, useMemo, useEffect } from 'react';
+import { Play, Code2, Activity, Trash2, Terminal, PackageCheck, Loader2, UploadCloud, X, BadgeCheck, FileCode, Calendar, Cloud, Target, Cpu, Radio, ShieldCheck, ShieldAlert, FileWarning, HelpCircle, Save, Info, BookOpen, Brackets, AlertCircle, RefreshCcw, ShieldCheck as ShieldIcon, Unlock, HardDrive, Check, Map as MapIcon } from 'lucide-react';
+import { Task, SatelliteResult } from '../types';
 import { GeeService } from '../services/GeeService';
+import { GoogleGenAI } from "@google/genai";
+
+interface Algorithm {
+  id: string;
+  name: string;
+  desc: string;
+  code: string;
+  category: string;
+  author: string;
+  createdAt: string;
+  status: 'VALID' | 'INVALID' | 'TESTING' | 'UNSUPPORTED';
+  errorReason?: string;
+  isPersistent?: boolean; 
+}
 
 interface TaskManagementProps {
   tasks: Task[];
@@ -10,344 +24,463 @@ interface TaskManagementProps {
   currentRoi?: any; 
   addTask: (name: string, type: string) => string;
   updateTask: (id: string, updates: Partial<Task>) => void;
-  setActiveTab?: (tab: AppTab) => void;
+  setResults?: (results: SatelliteResult[]) => void;
+  setActiveTab?: (tab: any) => void;
 }
 
-const ALGO_TEMPLATES = [
-  { 
-    id: 'ndvi', 
-    name: 'NDVI Index', 
-    desc: 'Vegetation density assessment via (B8-B4)/(B8+B4).', 
-    code: `// Sentinel-2 NDVI Calculation Kernel\nvar result = inputCollection.map(function(image) {\n  var ndvi = image.normalizedDifference(['B8', 'B4']).rename('NDVI');\n  return image.addBands(ndvi);\n});\n\nvar finalComposite = result.median().clip(geometry);\nprint(finalComposite);`
-  },
-  { 
-    id: 'water', 
-    name: 'NDWI Index', 
-    desc: 'Water body extraction via (Green-NIR)/(Green+NIR).', 
-    code: `// Sentinel-2 NDWI Calculation Kernel\nvar result = inputCollection.map(function(image) {\n  var ndwi = image.normalizedDifference(['B3', 'B8']).rename('NDWI');\n  return image.addBands(ndwi);\n});\n\nvar finalComposite = result.median().clip(geometry);\nprint(finalComposite);`
-  },
-  { 
-    id: 'rgb', 
-    name: 'True Color', 
-    desc: 'Standard median composite of Red, Green, and Blue bands.', 
-    code: `// Sentinel-2 RGB Natural Color Composite\nvar finalComposite = inputCollection.median()\n  .select(['B4', 'B3', 'B2'])\n  .clip(geometry);\n\nprint(finalComposite);`
-  }
+const DEFAULT_TEMPLATES: Algorithm[] = [
+  { id: 'ndvi', name: 'NDVI Index', desc: 'Vegetation assessment via (B8-B4)/(B8+B4).', category: 'Vegetation', author: 'System', createdAt: '2024-01-01', status: 'VALID', isPersistent: true, code: `// Sentinel-2 NDVI Calculation Kernel\n// Context: inputCollection (ImageCollection), geometry (ROI)\n\nvar result = inputCollection.map(function(image) {\n  var ndvi = image.normalizedDifference(['B8', 'B4']).rename('NDVI');\n  return image.addBands(ndvi);\n});\n\nvar finalComposite = result.median().clip(geometry);\nprint(finalComposite);` },
+  { id: 'veg_mask', name: 'Vegetation Mask (>0.4)', desc: 'Thresholding pixels where NDVI > 0.4 to isolate vegetation area.', category: 'Analysis', author: 'System', createdAt: '2024-03-20', status: 'VALID', isPersistent: true, code: `// Extract Vegetation Area Logic\nvar ndviResult = inputCollection.map(function(image) {\n  var ndvi = image.normalizedDifference(['B8', 'B4']);\n  var mask = ndvi.gt(0.4);\n  return image.updateMask(mask);\n});\n\nvar finalMap = ndviResult.median().clip(geometry);\nreturn finalMap;` },
+  { id: 'water', name: 'NDWI Index', desc: 'Water extraction via (Green-NIR)/(Green+NIR).', category: 'Water', author: 'System', createdAt: '2024-01-01', status: 'VALID', isPersistent: true, code: `// Sentinel-2 NDWI Calculation Kernel\nvar result = inputCollection.map(function(image) {\n  var ndwi = image.normalizedDifference(['B3', 'B8']).rename('NDWI');\n  return image.addBands(ndwi);\n});\n\nvar finalComposite = result.median().clip(geometry);\nprint(finalComposite);` }
 ];
 
-const TaskManagement: React.FC<TaskManagementProps> = ({ tasks, inputData = [], currentRoi, addTask, updateTask }) => {
+const TaskManagement: React.FC<TaskManagementProps> = ({ tasks, inputData = [], currentRoi, addTask, updateTask, setResults }) => {
   const [activeView, setActiveView] = useState<'DESIGN' | 'MONITOR'>('DESIGN');
-  const [selectedTemplate, setSelectedTemplate] = useState('ndvi');
-  const [codeContent, setCodeContent] = useState(ALGO_TEMPLATES[0].code);
-  const [taskName, setTaskName] = useState('Sentinel2_Analysis');
+  
+  const [algorithms, setAlgorithms] = useState<Algorithm[]>(() => {
+    try {
+      const saved = localStorage.getItem('GEE_ALGO_LIB');
+      const custom = saved ? JSON.parse(saved).map((a: any) => ({ ...a, isPersistent: true })) : [];
+      const filteredCustom = custom.filter((c: any) => !DEFAULT_TEMPLATES.some(d => d.id === c.id));
+      return [...DEFAULT_TEMPLATES, ...filteredCustom];
+    } catch (e) {
+      return DEFAULT_TEMPLATES;
+    }
+  });
+  
+  const [selectedAlgoId, setSelectedAlgoId] = useState('ndvi');
+  const [codeContent, setCodeContent] = useState(DEFAULT_TEMPLATES[0].code);
   const [outputType, setOutputType] = useState('LOCAL');
   const [isProcessing, setIsProcessing] = useState(false);
   const [uplinkLogs, setUplinkLogs] = useState<string[]>([]);
-  const [editorFontSize, setEditorFontSize] = useState(13);
-  const [isConsoleExpanded, setIsConsoleExpanded] = useState(true);
-  const [isSaved, setIsSaved] = useState(false);
+  const [showUploadModal, setShowUploadModal] = useState(false);
+  const [uploadForm, setUploadForm] = useState({ name: '', desc: '', category: 'General', code: '', error: '', status: 'IDLE' as Algorithm['status'] | 'IDLE' });
+  const [isTesting, setIsTesting] = useState(false);
+  const [selectedResult, setSelectedResult] = useState<SatelliteResult | null>(null);
 
-  // 统计信息计算 (Queue Summary Metrics)
+  const currentAlgo = algorithms.find(a => a.id === selectedAlgoId);
   const completedCount = tasks.filter(t => t.status === 'COMPLETED').length;
   const runningCount = tasks.filter(t => t.status === 'RUNNING').length;
-  const failedCount = tasks.filter(t => t.status === 'FAILED').length;
 
-  // 联动逻辑：切换模板时更新代码
-  const handleTemplateChange = (templateId: string) => {
-    setSelectedTemplate(templateId);
-    const template = ALGO_TEMPLATES.find(t => t.id === templateId);
-    if (template) setCodeContent(template.code);
-  };
+  useEffect(() => {
+    const toStore = algorithms.filter(a => a.author === 'User' && a.isPersistent);
+    localStorage.setItem('GEE_ALGO_LIB', JSON.stringify(toStore));
+  }, [algorithms]);
 
   const addUplinkLog = (msg: string) => {
-    setUplinkLogs(prev => [...prev.slice(-99), `[${new Date().toLocaleTimeString()}] ${msg}`]);
+    setUplinkLogs(prev => [...prev.slice(-199), `[${new Date().toLocaleTimeString()}] ${msg}`]);
   };
 
-  const clearLogs = () => setUplinkLogs([]);
+  const handleAlgoSelect = (algoId: string) => {
+    setSelectedAlgoId(algoId);
+    const algo = algorithms.find(a => a.id === algoId);
+    if (algo) setCodeContent(algo.code);
+  };
 
-  const handleSubmit = async () => {
-    if (inputData.length === 0) return alert("Please select imagery in Data Search first.");
-    const taskId = addTask(`${taskName} (${outputType})`, outputType);
-    setIsProcessing(true);
-    setActiveView('MONITOR');
-    addUplinkLog(`Initializing sequence for ${inputData.length} scenes...`);
-    
-    const ids = inputData.map(r => r.id);
-    let securityBlocked = false;
-
-    if (outputType === 'LOCAL') {
-      try {
-        await (window as any).showDirectoryPicker({ mode: 'readwrite' });
-      } catch (e: any) {
-        if (e.name === 'SecurityError' || e.message.includes('sub frames')) {
-          addUplinkLog("!! SECURITY_BLOCK: Browser restriction detected. Using Multi-Blob fallback.");
-          securityBlocked = true;
-        } else if (e.name === 'AbortError') {
-          updateTask(taskId, { status: 'FAILED' });
-          setIsProcessing(false);
-          return;
-        }
+  const auditAlgorithmWithAI = async (code: string): Promise<{valid: boolean, reason?: string, status: Algorithm['status']}> => {
+    setIsTesting(true);
+    addUplinkLog("Deploying AI Auditor...");
+    try {
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      const prompt = `Review GEE code logic. Return JSON ONLY: {"valid": boolean, "reason": "string"}. Code: """ ${code} """`;
+      const response = await ai.models.generateContent({
+        model: 'gemini-3-flash-preview',
+        contents: prompt,
+        config: { responseMimeType: "application/json", temperature: 0.1 }
+      });
+      const res = JSON.parse(response.text || '{"valid": false, "reason": "Timeout"}');
+      return { valid: !!res.valid, reason: res.reason, status: res.valid ? 'VALID' : 'INVALID' };
+    } catch (e: any) {
+      let errorMsg = e.message || "Connection failure.";
+      let status: Algorithm['status'] = 'INVALID';
+      if (errorMsg.includes("location is not supported")) {
+        errorMsg = "Regional Restriction. Use manual bypass.";
+        status = 'UNSUPPORTED';
       }
+      return { valid: false, reason: errorMsg, status };
+    } finally {
+      setIsTesting(false);
+    }
+  };
+
+  const saveToBrowser = (e: React.MouseEvent, id: string) => {
+    e.preventDefault(); e.stopPropagation();
+    setAlgorithms(prev => prev.map(a => a.id === id ? { ...a, isPersistent: true } : a));
+    addUplinkLog(`DATABASE: [${id}] is now saved in browser storage.`);
+  };
+
+  const removeFromBrowser = (e: React.MouseEvent, id: string) => {
+    e.preventDefault(); e.stopPropagation();
+    const target = algorithms.find(a => a.id === id);
+    if (!target) return;
+    setAlgorithms(prev => prev.map(a => a.id === id ? { ...a, isPersistent: false } : a));
+    addUplinkLog(`STORAGE: Removed [${target.name}] from browser memory.`);
+  };
+
+  const handleSaveOrAudit = async (isNew: boolean, forceTrust = false) => {
+    const codeToSubmit = isNew ? uploadForm.code : codeContent;
+    const nameToSubmit = isNew ? uploadForm.name : (currentAlgo?.name || 'Custom');
+
+    if (forceTrust) {
+      const newAlgo: Algorithm = {
+        id: isNew ? `custom_${Date.now()}` : selectedAlgoId,
+        name: nameToSubmit,
+        desc: isNew ? uploadForm.desc : (currentAlgo?.desc || 'User logic'),
+        category: isNew ? uploadForm.category : (currentAlgo?.category || 'General'),
+        author: 'User',
+        createdAt: new Date().toISOString(),
+        code: codeToSubmit,
+        status: 'VALID',
+        isPersistent: false 
+      };
+      setAlgorithms(prev => isNew ? [...prev, newAlgo] : prev.map(a => a.id === selectedAlgoId ? newAlgo : a));
+      if (isNew) setShowUploadModal(false);
+      return;
     }
 
+    const auditResult = await auditAlgorithmWithAI(codeToSubmit);
+    if (isNew && auditResult.valid) {
+      const newAlgo: Algorithm = {
+        id: `custom_${Date.now()}`,
+        name: uploadForm.name,
+        desc: uploadForm.desc,
+        category: uploadForm.category,
+        author: 'User',
+        createdAt: new Date().toISOString(),
+        code: uploadForm.code,
+        status: 'VALID',
+        isPersistent: false 
+      };
+      setAlgorithms(prev => [...prev, newAlgo]);
+      setShowUploadModal(false);
+    } else if (!isNew) {
+      setAlgorithms(prev => prev.map(a => a.id === selectedAlgoId ? { ...a, code: codeContent, status: auditResult.status, errorReason: auditResult.reason } : a));
+    }
+  };
+
+  const handleManualTrust = () => {
+    if (!currentAlgo) return;
+    setAlgorithms(prev => prev.map(a => a.id === selectedAlgoId ? { ...a, status: 'VALID' } : a));
+  };
+
+  const handleSubmit = async () => {
+    if (inputData.length === 0 || !currentRoi) return alert("System Check: Missing imagery or ROI.");
+    
+    const experimentName = currentAlgo?.name || 'PROC';
+    const taskId = addTask(`Sentinel_${experimentName}_${outputType}`, outputType);
+    setIsProcessing(true);
+    setActiveView('MONITOR');
+    setUplinkLogs([]);
+    addUplinkLog(`INITIALIZING: Task [${taskId}] starting for ${inputData.length} scenes.`);
+
     try {
-      if (outputType === 'LOCAL' && securityBlocked) {
-        let completed = 0;
-        for (let i = 0; i < ids.length; i++) {
-          const resultObj = inputData[i];
-          const { url, fileName } = await GeeService.generateSingleLocalUrl(ids[i], resultObj.date, selectedTemplate.toUpperCase(), currentRoi, taskName);
-          addUplinkLog(`Fetching: ${fileName}`);
-          const res = await fetch(url);
-          const blob = await res.blob();
-          const blobUrl = URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = blobUrl;
-          a.download = `${fileName}.tif`;
-          document.body.appendChild(a); a.click();
-          setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(blobUrl); }, 1000);
-          completed++;
-          updateTask(taskId, { progress: Math.round((completed / ids.length) * 100) });
-          addUplinkLog(`DONE: ${fileName} processed.`);
-          await new Promise(r => setTimeout(r, 1200));
+      if (outputType === 'LOCAL') {
+        const updated: SatelliteResult[] = [...inputData];
+        for (let i = 0; i < inputData.length; i++) {
+          const img = inputData[i];
+          addUplinkLog(`STEP ${i+1}/${inputData.length}: Uplinking [${img.id.split('/').pop()}]...`);
+          
+          try {
+            // 1. Generate the GEE download URL and the expected sanitized filename
+            const { url, fileName } = await GeeService.generateSingleLocalUrl(
+              img.id, 
+              img.date, 
+              selectedAlgoId, 
+              currentRoi, 
+              experimentName.toUpperCase()
+            );
+            
+            // 2. CRITICAL FIX: Fetch the remote data as a Blob to bypass cross-origin filename restrictions
+            // Direct links to googleapis.com will ignore the 'download' attribute.
+            // Converting to a local Blob URL forces the browser to honor the name.
+            addUplinkLog(`...Pulling data to local buffer...`);
+            const response = await fetch(url);
+            const blob = await response.blob();
+            const blobUrl = URL.createObjectURL(blob);
+
+            const link = document.createElement('a'); 
+            link.href = blobUrl; 
+            link.download = `${fileName}.tif`;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+
+            // Clean up memory
+            setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
+
+            addUplinkLog(`SUCCESS: Local pipe saved as [${fileName}.tif]`);
+            
+            // Link local path for AI Process
+            updated[i] = { ...img, localPath: `Downloads/${fileName}.tif` };
+            updateTask(taskId, { progress: ((i + 1) / inputData.length) * 100 });
+            
+            // Interval to prevent browser concurrent download overflow
+            await new Promise(resolve => setTimeout(resolve, 1500)); 
+          } catch (sceneErr: any) {
+            addUplinkLog(`FAILED: [${img.id.split('/').pop()}] -> ${sceneErr.message}`);
+          }
         }
-        updateTask(taskId, { status: 'COMPLETED', progress: 100 });
+        if (setResults) setResults(updated);
       } else {
-        await GeeService.startBatchExport(ids, selectedTemplate, currentRoi, outputType, taskName, addUplinkLog);
-        updateTask(taskId, { status: 'COMPLETED', progress: 100 });
+        addUplinkLog(`PIPELINE: Commencing BATCH EXPORT [${outputType}] for ${inputData.length} records.`);
+        const batchIds = await GeeService.startBatchExport(
+          inputData.map(d => d.id),
+          selectedAlgoId,
+          currentRoi,
+          outputType,
+          `RUN_${Date.now().toString().slice(-4)}`,
+          addUplinkLog
+        );
+        addUplinkLog(`COMPLETED: ${batchIds.length} tasks queued in GEE Batch Manager.`);
       }
+      
+      updateTask(taskId, { status: 'COMPLETED', progress: 100 });
+      addUplinkLog(`SYSTEM: Full pipeline execution finished.`);
     } catch (e: any) {
+      addUplinkLog(`CRITICAL ERROR: ${e.message}`);
       updateTask(taskId, { status: 'FAILED', error: e.message });
-      addUplinkLog(`!! ERROR: ${e.message}`);
-    } finally {
-      setIsProcessing(false);
+    } finally { 
+      setIsProcessing(false); 
     }
   };
 
   return (
-    <div className="flex flex-1 overflow-hidden h-full bg-[#050608]">
-      {/* Sidebar: 专注于任务配置与宏观统计 */}
-      <aside className="w-64 border-r border-white/5 bg-[#0a0c10] flex flex-col shrink-0">
+    <div className="flex flex-1 overflow-hidden h-full bg-[#050608] font-display relative">
+      <aside className="w-72 border-r border-white/5 bg-[#0a0c10] flex flex-col shrink-0">
         <div className="p-5 border-b border-white/5 flex items-center justify-between">
           <div className="flex items-center gap-2">
              <div className="size-1.5 bg-primary rounded-full shadow-[0_0_8px_#11b4d4]" />
-             <h2 className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Control Unit</h2>
+             <h2 className="text-[10px] font-black uppercase tracking-widest text-slate-400">Execution Hub</h2>
           </div>
           <div className="flex bg-white/5 p-1 rounded-lg border border-white/5">
-             <button onClick={() => setActiveView('DESIGN')} className={`p-1.5 rounded-md transition-all ${activeView === 'DESIGN' ? 'bg-primary text-black' : 'text-slate-500 hover:text-white'}`}><LayoutTemplate size={12} /></button>
-             <button onClick={() => setActiveView('MONITOR')} className={`p-1.5 rounded-md transition-all ${activeView === 'MONITOR' ? 'bg-primary text-black' : 'text-slate-500 hover:text-white'}`}><Activity size={12} /></button>
+             <button onClick={() => setActiveView('DESIGN')} className={`p-1.5 rounded-md transition-all ${activeView === 'DESIGN' ? 'bg-primary text-black' : 'text-slate-500'}`}><Code2 size={12} /></button>
+             <button onClick={() => setActiveView('MONITOR')} className={`p-1.5 rounded-md transition-all ${activeView === 'MONITOR' ? 'bg-primary text-black' : 'text-slate-500'}`}><Activity size={12} /></button>
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-5 space-y-6 custom-scrollbar">
+        <div className="flex-1 overflow-y-auto p-4 space-y-6 custom-scrollbar">
           {activeView === 'DESIGN' ? (
-            <div className="space-y-6 animate-in fade-in duration-300">
-              <div className="space-y-2">
-                <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest ml-1">Kernel Repository</label>
+            <div className="space-y-6">
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Algorithm Pool</label>
+                  <button onClick={() => setShowUploadModal(true)} className="text-primary hover:text-white transition-colors flex items-center gap-1">
+                    <UploadCloud size={10} />
+                    <span className="text-[8px] font-black uppercase tracking-tighter">Register New</span>
+                  </button>
+                </div>
                 <div className="space-y-1.5">
-                  {ALGO_TEMPLATES.map(t => (
-                    <button key={t.id} onClick={() => handleTemplateChange(t.id)} className={`w-full text-left p-3 rounded-xl border transition-all ${selectedTemplate === t.id ? 'bg-primary/5 border-primary shadow-[0_0_15px_rgba(17,180,212,0.1)]' : 'bg-black/20 border-white/5 hover:border-white/10'}`}>
-                      <p className={`text-[10px] font-bold ${selectedTemplate === t.id ? 'text-primary' : 'text-slate-300'}`}>{t.name}</p>
-                      <p className="text-[7px] text-slate-500 mt-0.5 line-clamp-1">{t.desc}</p>
-                    </button>
+                  {algorithms.map(a => (
+                    <div key={a.id} className="flex gap-1 items-stretch group relative">
+                        <button 
+                          onClick={() => handleAlgoSelect(a.id)} 
+                          className={`flex-1 text-left p-3 rounded-xl border transition-all ${selectedAlgoId === a.id ? 'bg-primary/5 border-primary shadow-[0_0_15px_rgba(17,180,212,0.1)]' : 'bg-black/20 border-white/5 hover:border-white/10'}`}
+                        >
+                            <div className="flex items-center gap-2 mb-1">
+                                <p className={`text-[10px] font-bold ${selectedAlgoId === a.id ? 'text-primary' : 'text-slate-200'}`}>{a.name}</p>
+                                {a.status === 'VALID' ? <BadgeCheck size={11} className="text-emerald-500" /> : <ShieldAlert size={11} className="text-rose-500" />}
+                            </div>
+                            <p className="text-[7px] text-slate-500 line-clamp-1 uppercase tracking-tighter">
+                              {a.isPersistent ? 'CLOUD PERSISTENT' : 'SESSION CACHE'}
+                            </p>
+                        </button>
+                        {a.author !== 'System' && (
+                            <div className="flex flex-col gap-1 w-10 opacity-0 group-hover:opacity-100 transition-all z-20">
+                                <button onClick={(e) => saveToBrowser(e, a.id)} disabled={a.isPersistent} className={`flex-1 flex items-center justify-center rounded-lg border border-white/5 transition-all ${a.isPersistent ? 'bg-emerald-500/10 text-emerald-500 cursor-default' : 'bg-primary/10 text-primary hover:bg-primary hover:text-black'}`} title="Save to Database"><Save size={12} /></button>
+                                <button onClick={(e) => removeFromBrowser(e, a.id)} disabled={!a.isPersistent} className={`flex-1 flex items-center justify-center rounded-lg border border-white/5 transition-all ${a.isPersistent ? 'bg-rose-500/10 text-rose-500 hover:bg-rose-500 hover:text-white' : 'bg-black/40 text-slate-800 cursor-not-allowed pointer-events-none'}`} title="Delete from Database"><Trash2 size={12} /></button>
+                            </div>
+                        )}
+                    </div>
                   ))}
                 </div>
               </div>
-              <div className="space-y-2">
-                <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest ml-1">Output Destination</label>
-                <div className="grid grid-cols-3 gap-1.5">
-                  {['LOCAL', 'DRIVE', 'ASSET'].map(type => (
-                    <button key={type} onClick={() => setOutputType(type)} className={`py-2 rounded-lg border text-[8px] font-black transition-all ${outputType === type ? 'bg-primary text-black border-primary' : 'bg-black/40 text-slate-500 border-white/5'}`}>{type}</button>
+              <div className="space-y-3">
+                <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Export Channel</label>
+                <div className="grid grid-cols-3 gap-2">
+                  {['LOCAL', 'DRIVE', 'ASSET'].map(t => (
+                    <button key={t} onClick={() => setOutputType(t)} className={`py-2 text-[9px] font-black uppercase rounded-lg border transition-all ${outputType === t ? 'bg-primary text-black border-primary' : 'bg-black/40 text-slate-500 border-white/5 hover:border-white/10'}`}>{t}</button>
                   ))}
                 </div>
               </div>
-              <div className="pt-4">
-                 <button onClick={handleSubmit} disabled={isProcessing || inputData.length === 0} className="w-full bg-white hover:bg-primary text-black font-black text-xs uppercase tracking-widest py-4 rounded-xl flex items-center justify-center gap-2 transition-all active:scale-95 shadow-2xl group">
-                    {isProcessing ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} className="group-hover:fill-current" />}
-                    Deploy Batch
-                 </button>
-                 <p className="text-[8px] text-slate-600 text-center mt-3 uppercase font-mono italic">Validated for Stable Version 1.0</p>
-              </div>
+              <button onClick={handleSubmit} disabled={isProcessing || inputData.length === 0} className="w-full bg-white hover:bg-primary text-black font-black text-xs uppercase py-4 rounded-2xl flex items-center justify-center gap-2 transition-all active:scale-95 shadow-xl disabled:opacity-20">
+                 {isProcessing ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />} Commit Pipeline
+              </button>
             </div>
           ) : (
-            /* MONITOR SIDEBAR: 汇总摘要，无重复列表 */
-            <div className="space-y-6 animate-in fade-in slide-in-from-left-2 duration-500">
-               <div className="space-y-3">
-                  <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest ml-1">Live Pipeline Status</label>
-                  <div className="bg-black/30 border border-white/5 rounded-2xl p-5 space-y-4 shadow-inner">
-                     <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2.5 text-slate-400"><div className="size-1.5 rounded-full bg-emerald-500 shadow-[0_0_8px_#10b981]" /><span className="text-[9px] font-bold uppercase tracking-tight">Success</span></div>
-                        <span className="text-[10px] font-mono font-bold text-white">{completedCount}</span>
-                     </div>
-                     <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2.5 text-slate-400"><div className="size-1.5 rounded-full bg-primary animate-pulse shadow-[0_0_8px_#11b4d4]" /><span className="text-[9px] font-bold uppercase tracking-tight">Running</span></div>
-                        <span className="text-[10px] font-mono font-bold text-white">{runningCount}</span>
-                     </div>
-                     <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2.5 text-slate-400"><div className="size-1.5 rounded-full bg-rose-500" /><span className="text-[9px] font-bold uppercase tracking-tight">Failure</span></div>
-                        <span className="text-[10px] font-mono font-bold text-white">{failedCount}</span>
-                     </div>
-                     <div className="h-px bg-white/5" />
-                     <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2.5 text-slate-400"><BarChart3 size={12} /><span className="text-[9px] font-bold uppercase tracking-tight">Peak Load</span></div>
-                        <span className="text-[10px] font-mono font-bold text-slate-300">32 MB/s</span>
-                     </div>
-                  </div>
-               </div>
-               <div className="bg-primary/5 border border-primary/20 rounded-xl p-4">
-                  <div className="flex items-center gap-2 text-primary mb-2"><Info size={12} /><span className="text-[9px] font-black uppercase tracking-widest">Health Insight</span></div>
-                  <p className="text-[9px] text-slate-400 leading-relaxed">System is performing optimally. Auto-retry protocol is active for transient network errors.</p>
-               </div>
+            <div className="space-y-4">
+              <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Real-time Monitor</label>
+              <div className="grid grid-cols-2 gap-2">
+                 <div className="bg-black/40 border border-white/5 rounded-xl p-3 text-center">
+                    <p className="text-[8px] text-slate-500 uppercase font-black mb-1">Exported</p>
+                    <p className="text-sm font-black text-emerald-500">{completedCount}</p>
+                 </div>
+                 <div className="bg-black/40 border border-white/5 rounded-xl p-3 text-center">
+                    <p className="text-[8px] text-slate-500 uppercase font-black mb-1">Remaining</p>
+                    <p className="text-sm font-black text-primary">{runningCount}</p>
+                 </div>
+              </div>
+              <div className="p-3 bg-black/40 rounded-xl border border-white/5 h-[400px] overflow-y-auto font-mono text-[8px] text-slate-500 space-y-1.5 custom-scrollbar">
+                 {uplinkLogs.map((log, i) => <div key={i} className={`${log.includes('SUCCESS') ? 'text-emerald-400' : log.includes('FAILED') || log.includes('ERROR') ? 'text-rose-400' : 'text-slate-400'}`}>{log}</div>)}
+                 {uplinkLogs.length === 0 && <div className="h-full flex flex-col items-center justify-center opacity-20"><Terminal size={24} className="mx-auto mb-2" /><span>Awaiting Pipeline Execution...</span></div>}
+              </div>
             </div>
           )}
         </div>
       </aside>
 
-      {/* Main Area: 差异化布局 */}
       <main className="flex-1 flex flex-col relative overflow-hidden bg-[#050608]">
-        {activeView === 'DESIGN' ? (
-          /* DESIGN VIEW: 影像预览 + 代码 (分层清晰) */
-          <div className="flex-1 flex flex-col overflow-hidden">
-            {/* 影像廊桥：作为处理前的输入确认 (New Header Area) */}
-            <div className="h-44 border-b border-white/5 bg-black/40 p-6 flex flex-col gap-3 shrink-0">
-               <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2 text-primary">
-                     <PackageCheck size={14} />
-                     <span className="text-[10px] font-black uppercase tracking-widest">Input Imagery Stream</span>
+        <div className="h-60 border-b border-white/5 bg-black/40 p-6 flex flex-col gap-4 overflow-hidden shrink-0">
+           <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-primary font-black uppercase text-[10px] tracking-widest"><PackageCheck size={14} /> Imagery Stream Pipeline</div>
+              <span className="text-[9px] font-mono text-slate-500 uppercase tracking-tighter">{inputData.length} Scenes Available</span>
+           </div>
+           <div className="flex-1 overflow-x-auto flex gap-4 pb-4 custom-scrollbar">
+              {inputData.map((img, i) => (
+                <div key={img.id || i} onClick={() => setSelectedResult(img)} className={`min-w-[220px] h-40 bg-[#111318] rounded-2xl border transition-all overflow-hidden flex flex-col cursor-pointer group ${selectedResult?.id === img.id ? 'border-primary shadow-[0_0_15px_rgba(17,180,212,0.2)]' : 'border-white/5 hover:border-white/10'}`}>
+                   <div className="h-24 bg-black relative">
+                      <img src={img.thumbnail} className="w-full h-full object-cover opacity-60 group-hover:opacity-100 transition-opacity" referrerPolicy="no-referrer" />
+                      <div className="absolute top-2 right-2 px-2 py-1 bg-black/80 text-[8px] font-mono text-primary rounded-lg border border-primary/20 backdrop-blur-md uppercase">IDX: {i+1}</div>
+                      <div className="absolute top-2 left-2 px-2 py-1 bg-black/80 text-[8px] font-black text-white rounded-lg border border-white/10 backdrop-blur-md uppercase tracking-tighter">{img.date}</div>
+                      {img.localPath && <div className="absolute bottom-2 right-2 p-1.5 bg-emerald-500 rounded-full text-black shadow-lg animate-pulse"><BadgeCheck size={10} /></div>}
+                   </div>
+                   <div className="p-3 flex-1 flex flex-col justify-between bg-white/[0.02]">
+                      <div className="flex justify-between items-center">
+                        <p className="text-[10px] font-black text-slate-200 truncate pr-2" title={img.id}>{img.id.split('/').pop()}</p>
+                        <span className="text-[8px] font-mono text-primary/60 shrink-0">{img.cloudCover}%</span>
+                      </div>
+                      <div className="flex items-center justify-between text-[7px] font-mono text-slate-600 uppercase tracking-tighter">
+                         <span className="truncate">{img.tileId}</span>
+                         {img.localPath ? <span className="text-emerald-500">SAVED</span> : <span className="text-slate-700">PENDING</span>}
+                      </div>
+                   </div>
+                </div>
+              ))}
+              {inputData.length === 0 && <div className="flex-1 border border-dashed border-white/5 rounded-3xl flex items-center justify-center text-[9px] uppercase font-black text-slate-600 bg-white/[0.01]">Execute Search to Populate Stream</div>}
+           </div>
+        </div>
+
+        <div className="flex-1 flex flex-col bg-[#07080a] min-h-0 relative">
+           <div className="h-10 px-6 flex items-center justify-between shrink-0 bg-[#0a0c10] border-b border-white/5 z-10">
+              <div className="flex items-center gap-2 text-slate-500 font-black text-[9px] uppercase tracking-widest"><FileCode size={12} /> Live_Kernel_Payload.js</div>
+              <div className="flex items-center gap-4">
+                {currentAlgo?.status === 'UNSUPPORTED' && (
+                    <button onClick={handleManualTrust} className="text-[8px] font-black uppercase tracking-widest px-4 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-500 flex items-center gap-2 hover:bg-amber-500 hover:text-black transition-all">
+                       <Unlock size={10} /> Bypass Audit
+                    </button>
+                )}
+                <button onClick={() => handleSaveOrAudit(false)} disabled={isTesting} className="text-[8px] font-black uppercase tracking-widest px-4 py-1.5 rounded-lg bg-primary/10 border border-primary/30 text-primary flex items-center gap-2 hover:bg-primary hover:text-black transition-all">
+                   {isTesting ? <Loader2 size={10} className="animate-spin" /> : <ShieldCheck size={10} />} Update Logic
+                </button>
+              </div>
+           </div>
+           
+           <div className="flex-1 relative flex flex-col">
+              <textarea value={codeContent} onChange={e => setCodeContent(e.target.value)} spellCheck={false} className="w-full flex-1 bg-transparent p-10 pl-14 text-slate-400 font-mono text-xs outline-none resize-none leading-relaxed" />
+              {currentAlgo?.errorReason && (
+                <div className="absolute bottom-6 right-6 left-14 backdrop-blur-md p-4 rounded-2xl flex items-start gap-4 border border-rose-500/20 bg-rose-500/10 z-20">
+                  <AlertCircle size={16} className="text-rose-500 shrink-0 mt-0.5" />
+                  <div className="space-y-1">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-rose-500">Auditor Feedback</p>
+                    <p className="text-[9px] text-slate-300 font-mono leading-relaxed">{currentAlgo.errorReason}</p>
                   </div>
-                  <div className="flex items-center gap-4">
-                     <span className="text-[9px] font-mono text-slate-500 uppercase">{inputData.length} Scenes Selected</span>
-                     <div className="h-3 w-px bg-white/10" />
-                     <div className="flex items-center gap-1.5 text-slate-500"><Target size={12} /><span className="text-[9px] font-black uppercase tracking-tight">{selectedTemplate} Active</span></div>
-                  </div>
+                </div>
+              )}
+           </div>
+
+           {isTesting && (
+             <div className="absolute inset-0 bg-black/60 backdrop-blur-[2px] flex items-center justify-center z-[110]">
+               <div className="flex flex-col items-center gap-4 text-primary font-black uppercase tracking-widest text-[11px]">
+                 <Loader2 className="animate-spin" size={24} /> 
+                 <span>Auditing Payload Safety...</span>
                </div>
-               <div className="flex-1 overflow-x-auto flex gap-3 pb-2 custom-scrollbar">
-                  {inputData.map((img, i) => (
-                    <div key={img.id} className="min-w-[130px] bg-[#111318] rounded-2xl border border-white/5 overflow-hidden group hover:border-primary/40 transition-all flex flex-col shadow-lg">
-                       <div className="h-16 bg-black relative">
-                          <img src={img.thumbnail} className="w-full h-full object-cover opacity-70 group-hover:opacity-100 transition-opacity" referrerPolicy="no-referrer" />
-                          <div className="absolute top-1 left-1 text-[7px] bg-black/80 px-1 py-0.5 rounded text-slate-400 border border-white/5">0{i+1}</div>
-                       </div>
-                       <div className="p-2.5 flex-1 flex flex-col justify-center">
-                          <p className="text-[9px] font-bold text-slate-200">{img.date}</p>
-                          <p className="text-[7px] text-slate-500 font-mono truncate uppercase tracking-tighter">{img.id.split('/').pop()}</p>
-                       </div>
+             </div>
+           )}
+        </div>
+      </main>
+
+      {/* METADATA INSPECTOR POPUP */}
+      {selectedResult && (
+        <div className="fixed top-24 right-8 w-80 bg-[#14161c]/98 backdrop-blur-2xl border border-white/10 rounded-[32px] shadow-2xl overflow-hidden z-[200] animate-in slide-in-from-right-10 duration-500">
+           <div className="p-5 border-b border-white/5 flex items-start justify-between bg-white/5 backdrop-blur-md">
+              <div className="flex items-center gap-3">
+                 <div className="p-2.5 bg-primary/10 rounded-2xl text-primary"><Info size={20} /></div>
+                 <div>
+                    <h3 className="text-[11px] font-black uppercase tracking-widest text-white">Scene Metadata</h3>
+                    <p className="text-[8px] font-mono text-slate-500 mt-0.5">{selectedResult.tileId}</p>
+                 </div>
+              </div>
+              <button onClick={() => setSelectedResult(null)} className="text-slate-500 hover:text-white p-1.5 bg-white/5 rounded-xl transition-all"><X size={18} /></button>
+           </div>
+           <div className="p-6 space-y-5 overflow-y-auto max-h-[60vh] custom-scrollbar">
+              <div className="grid grid-cols-2 gap-3">
+                 <div className="bg-black/40 p-3.5 rounded-2xl border border-white/5">
+                    <p className="text-[8px] font-black text-slate-500 uppercase mb-1">Captured</p>
+                    <p className="text-[11px] font-bold text-slate-100">{selectedResult.date}</p>
+                 </div>
+                 <div className="bg-black/40 p-3.5 rounded-2xl border border-white/5">
+                    <p className="text-[8px] font-black text-slate-500 uppercase mb-1">Cloud Cover</p>
+                    <p className="text-[11px] font-bold text-emerald-400">{selectedResult.cloudCover}%</p>
+                 </div>
+              </div>
+              <div className="space-y-2.5">
+                  {[
+                    { icon: <Target size={12}/>, label: 'Platform', value: selectedResult.metadata.platform },
+                    { icon: <Activity size={12}/>, label: 'Orbit', value: `${selectedResult.metadata.orbitNumber} (${selectedResult.metadata.orbitDirection})` },
+                    { icon: <Cpu size={12}/>, label: 'Resolution', value: selectedResult.metadata.resolution },
+                    { icon: <Radio size={12}/>, label: 'Bands', value: selectedResult.metadata.bands },
+                    { icon: <MapIcon size={12}/>, label: 'Relative Orbit', value: selectedResult.metadata.relativeOrbit }
+                  ].map((row, idx) => (
+                    <div key={idx} className="flex items-center justify-between p-3 bg-black/20 rounded-xl border border-white/5">
+                        <div className="flex items-center gap-3 text-slate-500">
+                           {row.icon}
+                           <span className="text-[9px] font-black uppercase tracking-tighter">{row.label}</span>
+                        </div>
+                        <span className="text-[10px] font-bold text-white text-right">{row.value}</span>
                     </div>
                   ))}
-                  {inputData.length === 0 && (
-                    <div className="flex-1 border border-dashed border-white/5 rounded-2xl flex flex-col items-center justify-center text-slate-600 animate-pulse bg-white/2">
-                       <Database size={24} />
-                       <p className="text-[8px] uppercase font-black mt-2 tracking-widest text-center">Waiting for Input data from Search Terminal</p>
-                    </div>
-                  )}
-               </div>
-            </div>
+              </div>
+           </div>
+           <div className="p-4 bg-primary/5 border-t border-white/5">
+              <button onClick={() => setSelectedResult(null)} className="w-full py-3 bg-primary text-black font-black text-[10px] uppercase rounded-xl shadow-lg hover:scale-[1.02] active:scale-95 transition-all">Dismiss Inspector</button>
+           </div>
+        </div>
+      )}
 
-            {/* 编辑器：高度优化，专注于逻辑核 (Central Editor) */}
-            <div className="flex-1 flex flex-col min-h-0 bg-[#07080a]">
-               <div className="h-10 border-b border-white/5 bg-[#0a0c10] px-6 flex items-center justify-between shrink-0">
-                  <div className="flex items-center gap-2 text-slate-400">
-                     <FileCode size={12} className="text-primary/70" />
-                     <span className="text-[9px] font-black uppercase tracking-widest">Processor_v1.0.js</span>
-                  </div>
-                  <div className="flex items-center gap-3">
-                     <button onClick={() => { localStorage.setItem('GEE_SCRATCH', codeContent); setIsSaved(true); setTimeout(() => setIsSaved(false), 2000); }} className={`flex items-center gap-1.5 text-[9px] font-black uppercase tracking-widest px-3 py-1 rounded-lg border transition-all ${isSaved ? 'bg-emerald-500/10 border-emerald-500 text-emerald-500' : 'bg-primary/10 border-primary/30 text-primary hover:bg-primary hover:text-black'}`}>
-                        {isSaved ? <CheckCircle2 size={10} /> : <Save size={10} />}
-                        {isSaved ? 'Synchronized' : 'Commit Code'}
-                     </button>
-                  </div>
-               </div>
-               <div className="flex-1 relative overflow-hidden">
-                  <div className="absolute top-0 left-0 w-8 h-full bg-white/2 border-r border-white/5" />
-                  <textarea value={codeContent} onChange={e => setCodeContent(e.target.value)} spellCheck={false} className="w-full h-full bg-transparent p-10 pl-14 text-slate-400 font-mono outline-none resize-none leading-relaxed custom-scrollbar selection:bg-primary/20" style={{ fontSize: `${editorFontSize}px` }} />
-               </div>
-            </div>
-            
-            {/* 极简底部：仅显示链路信息 */}
-            <div className="h-8 border-t border-white/5 bg-black/60 px-6 flex items-center gap-6 text-[8px] font-mono text-slate-600 uppercase shrink-0">
-               <div className="flex items-center gap-1.5"><Clock size={10} /> Response: 28ms</div>
-               <div className="flex items-center gap-1.5"><ArrowRightLeft size={10} /> Linkage: GEE-PRO-1.0</div>
-               <div className="ml-auto text-primary/30 tracking-tighter">Ready for deployment sequence</div>
-            </div>
-          </div>
-        ) : (
-          /* MONITOR VIEW: 真正的工作任务网格 */
-          <div className="flex-1 flex flex-col overflow-hidden animate-in fade-in duration-700">
-             {/* 任务看板 (Expanded Grid) */}
-             <div className="flex-1 p-8 overflow-y-auto custom-scrollbar">
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                   {tasks.map(t => (
-                      <div key={t.id} className="bg-[#111318] border border-white/5 rounded-[28px] p-6 relative overflow-hidden group hover:border-primary/50 transition-all shadow-[0_15px_35px_rgba(0,0,0,0.3)]">
-                         {t.status === 'RUNNING' && <div className="absolute top-0 left-0 w-full h-1 bg-primary/20 overflow-hidden"><div className="h-full bg-primary animate-[shimmer_2s_infinite] w-full" style={{ backgroundImage: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.4), transparent)' }} /></div>}
-                         <div className="flex justify-between items-center mb-5">
-                            <div className="flex items-center gap-2">
-                               <div className={`size-2 rounded-full ${t.status === 'COMPLETED' ? 'bg-emerald-500 shadow-[0_0_10px_#10b981]' : t.status === 'FAILED' ? 'bg-rose-500 shadow-[0_0_10px_#f43f5e]' : 'bg-primary animate-pulse shadow-[0_0_10px_#11b4d4]'}`} />
-                               <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">{t.id}</span>
-                            </div>
-                            {t.status === 'COMPLETED' && <CheckCircle2 size={14} className="text-emerald-500" />}
-                            {t.status === 'FAILED' && <Info size={14} className="text-rose-500" />}
-                         </div>
-                         <h3 className="text-sm font-bold text-white truncate mb-1">{t.name}</h3>
-                         <p className="text-[10px] text-slate-500 font-mono mb-8">{t.startTime.split(' ')[1]}</p>
-                         
-                         <div className="space-y-3 pt-4 border-t border-white/5">
-                            <div className="flex justify-between items-end">
-                               <span className="text-[9px] font-black text-primary uppercase tracking-widest">Progress Matrix</span>
-                               <span className="text-xs font-mono font-bold text-white">{t.progress.toFixed(0)}%</span>
-                            </div>
-                            <div className="h-1.5 bg-black/50 rounded-full overflow-hidden p-0.5 border border-white/5">
-                               <div className="h-full bg-primary rounded-full transition-all duration-700 shadow-[0_0_12px_rgba(17,180,212,0.4)]" style={{ width: `${t.progress}%` }} />
-                            </div>
-                         </div>
-                      </div>
-                   ))}
-                   {tasks.length === 0 && (
-                      <div className="col-span-full py-32 flex flex-col items-center justify-center opacity-10">
-                         <Activity size={56} className="text-slate-400 mb-6" />
-                         <p className="text-[11px] font-black uppercase tracking-[0.4em]">Awaiting Execution Session</p>
-                      </div>
-                   )}
+      {/* UPLOAD MODAL */}
+      {showUploadModal && (
+        <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/95 backdrop-blur-xl p-6">
+          <div className="w-full max-w-5xl h-[85vh] bg-[#0d0f14] border border-white/10 rounded-[40px] overflow-hidden shadow-2xl flex flex-col">
+             <div className="p-6 border-b border-white/5 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                   <div className="p-2.5 bg-primary/10 rounded-2xl text-primary"><UploadCloud size={20} /></div>
+                   <h3 className="text-[12px] font-black uppercase tracking-[0.2em] text-white">Algorithm Uplink</h3>
                 </div>
+                <button onClick={() => setShowUploadModal(false)} className="p-2 text-slate-500 hover:text-white"><X size={20} /></button>
              </div>
-
-             {/* 真正好用的控制台 (Functional Console) */}
-             <div className={`border-t border-white/5 bg-[#0a0c10] flex flex-col transition-all duration-300 ease-out ${isConsoleExpanded ? 'h-64' : 'h-10'}`}>
-                <div className="h-10 px-6 border-b border-white/5 flex items-center justify-between shrink-0 bg-white/5 backdrop-blur-md">
-                   <div className="flex items-center gap-3">
-                      <Terminal size={12} className="text-primary" />
-                      <span className="text-[9px] font-black uppercase tracking-widest text-slate-400">Trace Log Output</span>
-                      <div className="h-3 w-px bg-white/10 mx-1" />
-                      <span className="text-[8px] font-mono text-slate-600 uppercase tracking-tighter">{uplinkLogs.length} Records In Buffer</span>
+             <div className="flex-1 flex overflow-hidden">
+                <div className="w-80 border-r border-white/5 p-8 space-y-6 overflow-y-auto custom-scrollbar">
+                   <div className="space-y-4">
+                      <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Identification</label>
+                      <input placeholder="Kernel Name" value={uploadForm.name} onChange={e => setUploadForm({...uploadForm, name: e.target.value})} className="w-full bg-black/40 border border-white/10 rounded-xl py-3 px-4 text-xs text-white outline-none focus:border-primary/40" />
+                      <textarea placeholder="Operation summary..." value={uploadForm.desc} onChange={e => setUploadForm({...uploadForm, desc: e.target.value})} className="w-full h-24 bg-black/40 border border-white/10 rounded-xl py-3 px-4 text-xs text-slate-400 outline-none resize-none focus:border-primary/40" />
                    </div>
-                   <div className="flex items-center gap-1">
-                      <button onClick={clearLogs} className="p-2 text-slate-500 hover:text-rose-500 transition-colors" title="Flush Console Data">
-                         <Trash2 size={12} />
-                      </button>
-                      <button onClick={() => setIsConsoleExpanded(!isConsoleExpanded)} className="p-2 text-slate-500 hover:text-white transition-all">
-                        {isConsoleExpanded ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
-                      </button>
+                   <div className="p-4 bg-emerald-500/10 rounded-2xl border border-emerald-500/20 text-[9px] text-emerald-500/80 font-bold uppercase leading-relaxed">
+                      Session-only persistence. Save to browser after verification to keep permanently.
                    </div>
                 </div>
-                {isConsoleExpanded && (
-                  <div className="flex-1 p-5 overflow-y-auto custom-scrollbar font-mono text-[10px] space-y-1 bg-black/30 animate-in slide-in-from-bottom-2 duration-300">
-                     {uplinkLogs.map((log, i) => (
-                        <div key={i} className={`flex gap-3 py-1 border-b border-white/[0.02] ${log.includes('!!') ? 'text-rose-500 bg-rose-500/5' : log.includes('DONE') ? 'text-emerald-500' : 'text-slate-500'}`}>
-                           <span className="opacity-20 shrink-0 w-6">{(i+1).toString().padStart(2, '0')}</span>
-                           <span className="truncate group-hover:text-white transition-colors">{log}</span>
-                        </div>
-                     ))}
-                     {uplinkLogs.length === 0 && <div className="h-full flex items-center justify-center text-slate-700 text-[8px] uppercase font-black tracking-widest">Console Stream Idle</div>}
-                  </div>
-                )}
+                <div className="flex-1 flex flex-col bg-[#07080a]">
+                   <textarea value={uploadForm.code} onChange={e => setUploadForm({...uploadForm, code: e.target.value})} spellCheck={false} placeholder="// Enter GEE Logic (JavaScript) here..." className="flex-1 bg-transparent p-10 font-mono text-sm text-primary/90 outline-none resize-none" />
+                </div>
+             </div>
+             <div className="p-8 bg-black/40 border-t border-white/5 flex items-center justify-end gap-4">
+                <button onClick={() => setShowUploadModal(false)} className="px-8 py-3 text-[10px] font-black uppercase text-slate-500 hover:text-white transition-colors">Cancel</button>
+                <button onClick={() => handleSaveOrAudit(true)} disabled={isTesting || !uploadForm.name || !uploadForm.code} className="bg-primary text-black px-12 py-4 rounded-2xl font-black text-[11px] uppercase tracking-widest shadow-lg hover:scale-105 active:scale-95 transition-all">
+                  {isTesting ? <Loader2 size={18} className="animate-spin" /> : 'Audit & Archive'}
+                </button>
              </div>
           </div>
-        )}
-      </main>
-      
-      <style>{`
-         @keyframes shimmer {
-            0% { transform: translateX(-100%); }
-            100% { transform: translateX(100%); }
-         }
-      `}</style>
+        </div>
+      )}
     </div>
   );
 };
