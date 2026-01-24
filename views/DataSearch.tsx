@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Database, Search, MousePointer2, Loader2, CheckCircle2, UploadCloud, Terminal, AlertCircle, ChevronRight, Cloud, Radio, Zap, X, Map as MapIcon, Calendar, Layers, Hash, Info, Target, Cpu, Compass, Activity } from 'lucide-react';
+import { Database, Search, MousePointer2, Loader2, CheckCircle2, UploadCloud, Terminal, AlertCircle, ChevronRight, Cloud, Radio, Zap, X, Map as MapIcon, Calendar, Layers, Hash, Info, Target, Cpu, Compass, Activity, Trash2 } from 'lucide-react';
 import GoogleMapView, { GoogleMapRef } from '../components/GoogleMapView';
 import { GeeService } from '../services/GeeService';
 import { SatelliteResult } from '../types';
@@ -21,9 +21,10 @@ interface DataSearchProps {
   addLog: (level: any, msg: string, payload?: any) => void;
   results: SatelliteResult[];
   setResults: (results: SatelliteResult[]) => void;
+  onRoiChange: (roi: any) => void; // New callback
 }
 
-const DataSearch: React.FC<DataSearchProps> = ({ addTask, addLog, results, setResults }) => {
+const DataSearch: React.FC<DataSearchProps> = ({ addTask, addLog, results, setResults, onRoiChange }) => {
   const mapRef = useRef<GoogleMapRef>(null);
   const [roiMode, setRoiMode] = useState<'ADMIN' | 'DRAW' | 'FILE'>('ADMIN');
   const [cloudCover, setCloudCover] = useState(30); 
@@ -57,6 +58,12 @@ const DataSearch: React.FC<DataSearchProps> = ({ addTask, addLog, results, setRe
       .catch(() => addLog('WARN', '行政数据库载入离线模式'));
   }, []);
 
+  // Update Global ROI whenever state changes
+  useEffect(() => {
+    if (roiMode === 'DRAW') onRoiChange(drawGeo);
+    if (roiMode === 'FILE') onRoiChange(fileGeo);
+  }, [drawGeo, fileGeo, roiMode]);
+
   const geocodeAdmin = async (names: string[]): Promise<any> => {
     return new Promise((resolve, reject) => {
       const address = names.join('');
@@ -68,13 +75,15 @@ const DataSearch: React.FC<DataSearchProps> = ({ addTask, addLog, results, setRe
           mapRef.current?.fitBounds(bounds);
           const ne = bounds.getNorthEast();
           const sw = bounds.getSouthWest();
-          resolve({
+          const geo = {
             type: "Feature",
             geometry: {
               type: "Polygon",
               coordinates: [[[sw.lng(), sw.lat()], [ne.lng(), sw.lat()], [ne.lng(), ne.lat()], [sw.lng(), ne.lat()], [sw.lng(), sw.lat()]]]
             }
-          });
+          };
+          onRoiChange(geo); // Sync admin ROI
+          resolve(geo);
         } else reject(new Error(`地址编码失败: ${status}`));
       });
     });
@@ -132,9 +141,6 @@ const DataSearch: React.FC<DataSearchProps> = ({ addTask, addLog, results, setRe
     try {
         const mapIdUrl = await GeeService.getOverlayMapId(res.id);
         if (mapIdUrl) {
-            // Note: GoogleMapView.addTileLayer automatically clears previous tile layers.
-            // This ensures we switch clean to the new image, but allows the old one to stay
-            // if we just closed the inspector (because we only click here to switch).
             mapRef.current?.addTileLayer(mapIdUrl);
             addLog('SUCCESS', `全分辨率图层已载入: ${res.id}`);
         }
@@ -143,11 +149,18 @@ const DataSearch: React.FC<DataSearchProps> = ({ addTask, addLog, results, setRe
     } finally { setTileLoading(false); }
   };
 
+  const handleDeleteResult = (e: React.MouseEvent, id: string) => {
+      e.stopPropagation(); 
+      const newResults = results.filter(r => r.id !== id);
+      setResults(newResults);
+      if (selectedResult?.id === id) {
+          closeInspector();
+      }
+      addLog('INFO', `Removed image ${id.split('/').pop()} from analysis pool.`);
+  };
+
   const closeInspector = () => {
       setSelectedResult(null);
-      // CRITICAL CHANGE: We DO NOT clear overlays here. 
-      // This allows the user to see the map unobstructed by the panel.
-      // The overlay will only be cleared when a new search runs or a new result is selected.
   };
 
   return (
@@ -206,9 +219,16 @@ const DataSearch: React.FC<DataSearchProps> = ({ addTask, addLog, results, setRe
               <h3 className="text-[8px] font-black text-slate-500 uppercase tracking-widest ml-1">MATCHED IMAGERY ({results.length})</h3>
               <div className="grid grid-cols-1 gap-2">
                 {results.map((res) => (
-                  <div key={res.id} onClick={() => handleResultClick(res)} className={`group bg-black/20 border rounded-xl overflow-hidden cursor-pointer flex h-14 transition-all ${selectedResult?.id === res.id ? 'border-primary shadow-[0_0_10px_rgba(17,180,212,0.1)]' : 'border-white/5 hover:border-white/10'}`}>
+                  <div key={res.id} onClick={() => handleResultClick(res)} className={`group bg-black/20 border rounded-xl overflow-hidden cursor-pointer flex h-14 transition-all relative ${selectedResult?.id === res.id ? 'border-primary shadow-[0_0_10px_rgba(17,180,212,0.1)]' : 'border-white/5 hover:border-white/10'}`}>
                     <div className="w-14 bg-black shrink-0 relative">{res.thumbnail ? <img src={res.thumbnail} className="w-full h-full object-cover group-hover:opacity-100" referrerPolicy="no-referrer" /> : <div className="w-full h-full flex items-center justify-center bg-slate-800 text-slate-500 text-[8px]">NO IMG</div>}{selectedResult?.id === res.id && <div className="absolute inset-0 bg-primary/20 flex items-center justify-center backdrop-blur-[1px]">{tileLoading ? <Loader2 size={12} className="animate-spin text-white" /> : <MapIcon size={12} className="text-white drop-shadow-md" />}</div>}</div>
                     <div className="flex-1 p-2 flex flex-col justify-center min-w-0"><div className="flex justify-between items-center mb-0.5"><p className="text-[9px] font-bold text-slate-300">{res.date}</p><span className="text-[8px] font-black text-primary/80">C:{res.cloudCover}%</span></div><p className="text-[7px] font-mono text-slate-600 truncate uppercase" title={res.id}>{res.id.split('/').pop()}</p></div>
+                    <button 
+                        onClick={(e) => handleDeleteResult(e, res.id)} 
+                        className="absolute bottom-1 right-1 p-1.5 text-slate-600 hover:text-rose-500 hover:bg-rose-500/10 rounded-lg transition-all opacity-0 group-hover:opacity-100"
+                        title="Remove from Analysis Pool"
+                    >
+                        <Trash2 size={12} />
+                    </button>
                   </div>
                 ))}
               </div>
@@ -267,33 +287,6 @@ const DataSearch: React.FC<DataSearchProps> = ({ addTask, addLog, results, setRe
                         <div className="flex items-center gap-2 text-slate-500"><Radio size={10} /><span className="text-[8px] font-black uppercase tracking-widest">Spectral Bands</span></div>
                         <span className="text-[9px] font-bold text-white">{selectedResult.metadata.bands}</span>
                     </div>
-                </div>
-
-                <div className="p-3 rounded-xl bg-black/40 border border-white/5">
-                   <p className="text-[8px] font-black uppercase tracking-widest text-slate-500 mb-2">Satellite Trajectory</p>
-                   <div className="grid grid-cols-2 gap-y-2">
-                      <div className="flex flex-col">
-                         <span className="text-[7px] text-slate-500 uppercase font-black">Orbit Dir</span>
-                         <span className="text-[9px] font-mono text-slate-300 flex items-center gap-1"><Compass size={8} /> {selectedResult.metadata.orbitDirection}</span>
-                      </div>
-                      <div className="flex flex-col">
-                         <span className="text-[7px] text-slate-500 uppercase font-black">Rel Orbit</span>
-                         <span className="text-[9px] font-mono text-slate-300 flex items-center gap-1"><Activity size={8} /> #{selectedResult.metadata.relativeOrbit}</span>
-                      </div>
-                      <div className="flex flex-col">
-                         <span className="text-[7px] text-slate-500 uppercase font-black">Processing Baseline</span>
-                         <span className="text-[9px] font-mono text-slate-300">{selectedResult.metadata.processingBaseline}</span>
-                      </div>
-                   </div>
-                </div>
-                
-                <div className="pt-1">
-                   <div className="flex items-center gap-2 p-2.5 bg-blue-500/10 border border-blue-500/20 rounded-xl">
-                      <Zap size={10} className="text-blue-400 shrink-0" />
-                      <p className="text-[8px] text-blue-300 uppercase leading-relaxed font-bold">
-                        Zoom on map to inspect 10m Ground Sample Distance (GSD). GEE dynamically handles multi-scale resampling.
-                      </p>
-                   </div>
                 </div>
              </div>
           </div>

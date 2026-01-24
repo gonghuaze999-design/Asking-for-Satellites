@@ -12,6 +12,7 @@ const App: React.FC = () => {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [searchResults, setSearchResults] = useState<SatelliteResult[]>([]);
+  const [currentRoi, setCurrentRoi] = useState<any>(null);
 
   const addLog = useCallback((level: LogEntry['level'], message: string, payload?: any) => {
     const newLog: LogEntry = {
@@ -23,9 +24,10 @@ const App: React.FC = () => {
     setLogs(prev => [...prev.slice(-99), newLog]);
   }, []);
 
-  const addTask = useCallback((name: string, type: string) => {
+  const addTask = useCallback((name: string, type: string): string => {
+    const id = `GE-${Math.floor(Math.random() * 100000)}`;
     const newTask: Task = {
-      id: `GE-${Math.floor(Math.random() * 100000)}`,
+      id,
       name,
       type,
       status: 'RUNNING',
@@ -34,42 +36,60 @@ const App: React.FC = () => {
       estRemaining: 'calculating...'
     };
     setTasks(prev => [newTask, ...prev]);
-    addLog('INFO', `Dispatched background task: ${name}`, { id: newTask.id, type });
+    addLog('INFO', `Dispatched task: ${name}`, { id, type });
+    return id;
   }, [addLog]);
 
-  // Task Progress Simulation
+  const updateTask = useCallback((id: string, updates: Partial<Task>) => {
+    setTasks(prev => prev.map(t => t.id === id ? { ...t, ...updates } : t));
+  }, []);
+
+  // Task Progress Simulation for non-instant tasks
   useEffect(() => {
     const interval = setInterval(() => {
       setTasks(prev => prev.map(task => {
-        if (task.status !== 'RUNNING') return task;
-        const newProgress = Math.min(task.progress + Math.random() * 5, 100);
-        const isDone = newProgress >= 100;
+        if (task.status !== 'RUNNING' || task.progress >= 100) return task;
         
-        if (isDone) {
-          addLog('SUCCESS', `Task completed: ${task.name}`, { id: task.id });
-        }
-
+        // Slightly random progress
+        const newProgress = Math.min(task.progress + Math.random() * 8, 99);
+        
         return {
           ...task,
           progress: newProgress,
-          status: isDone ? 'COMPLETED' : 'RUNNING',
-          estRemaining: isDone ? undefined : `~${Math.ceil((100 - newProgress) / 2)}m`
+          estRemaining: `~${Math.ceil((100 - newProgress) / 5)}m`
         };
       }));
-    }, 3000);
+    }, 2000);
     return () => clearInterval(interval);
-  }, [addLog]);
+  }, []);
 
   const renderContent = () => {
     switch (activeTab) {
       case AppTab.DATA_SEARCH:
-        return <DataSearch addTask={addTask} addLog={addLog} setResults={setSearchResults} results={searchResults} />;
+        return (
+          <DataSearch 
+            addTask={addTask} 
+            addLog={addLog} 
+            setResults={setSearchResults} 
+            results={searchResults} 
+            onRoiChange={setCurrentRoi}
+          />
+        );
       case AppTab.TASK_MANAGEMENT:
-        return <TaskManagement tasks={tasks} />;
+        return (
+          <TaskManagement 
+            tasks={tasks} 
+            inputData={searchResults} 
+            currentRoi={currentRoi}
+            addTask={addTask}
+            updateTask={updateTask}
+            setActiveTab={setActiveTab}
+          />
+        );
       case AppTab.API_CONSOLE:
         return <ApiConsole logs={logs} addLog={addLog} />;
       default:
-        return <DataSearch addTask={addTask} addLog={addLog} setResults={setSearchResults} results={searchResults} />;
+        return <DataSearch addTask={addTask} addLog={addLog} setResults={setSearchResults} results={searchResults} onRoiChange={setCurrentRoi} />;
     }
   };
 
