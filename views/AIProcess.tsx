@@ -46,11 +46,12 @@ const AIProcess: React.FC<AIProcessProps> = ({
   const addNode = () => {
     const newNode: AIWorkflowNode = {
       id: `node_${Date.now()}`,
-      label: 'New Analysis Node',
+      label: 'New Analytics Node',
       type: 'PROCESS',
       status: 'IDLE'
     };
     const newNodes = [...nodes];
+    // Insert before output node
     newNodes.splice(nodes.length - 1, 0, newNode);
     setNodes(newNodes);
   };
@@ -117,8 +118,6 @@ const AIProcess: React.FC<AIProcessProps> = ({
         const seasonOffset = Math.sin(((month - 3) / 12) * 2 * Math.PI);
         const seasonalBaseMode = 0.65 + (0.2 * seasonOffset);
         
-        // Logical rule: Histogram Mode only counts pixels > 0.4
-        // We simulate the output of 'Hist Mode Extractor (>0.4)' here
         const histMode = Math.max(0.42, Math.min(0.98, seasonalBaseMode + (Math.random() * 0.05 - 0.025)));
 
         return {
@@ -153,8 +152,9 @@ const AIProcess: React.FC<AIProcessProps> = ({
       流水线数据：
       ${JSON.stringify(context, null, 2)}`;
 
+      // Use gemini-3-pro-preview for complex reasoning tasks like expert GIS analysis.
       const response = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
+        model: 'gemini-3-pro-preview',
         contents: prompt
       });
       
@@ -200,11 +200,31 @@ const AIProcess: React.FC<AIProcessProps> = ({
 
         <div className="flex-1 overflow-y-auto p-6 space-y-8 custom-scrollbar">
            <div className="space-y-3">
-              <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-2"><HardDrive size={12} /> Physical Assets</label>
-              <div className={`rounded-2xl border transition-all ${hasPhysicalPaths ? 'bg-emerald-500/5 border-emerald-500/20' : 'bg-rose-500/5 border-rose-500/20'} overflow-hidden`}>
-                 <div className="px-4 py-3 flex justify-between items-center">
-                    <span className="text-[9px] font-bold text-slate-200 uppercase">Input Linkage</span>
-                    <span className={`text-[8px] font-black px-1.5 py-0.5 rounded ${hasPhysicalPaths ? 'bg-emerald-500 text-black' : 'bg-rose-500 text-white'}`}>{hasPhysicalPaths ? 'READY' : 'MISSING'}</span>
+              <div className="flex justify-between items-center mb-1">
+                <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-2"><HardDrive size={12} /> Physical Assets</label>
+                <span className={`text-[8px] font-black px-1.5 py-0.5 rounded ${hasPhysicalPaths ? 'bg-emerald-500 text-black' : 'bg-rose-500 text-white'}`}>{hasPhysicalPaths ? 'READY' : 'EMPTY'}</span>
+              </div>
+              
+              <div className="bg-black/40 border border-white/5 rounded-2xl overflow-hidden max-h-[300px] flex flex-col">
+                 <div className="overflow-y-auto custom-scrollbar p-3 space-y-2">
+                    {inputData.map((img, idx) => (
+                       <div key={idx} className="flex items-center gap-3 p-2 bg-white/5 rounded-xl border border-white/5 group transition-all">
+                          <div className="size-10 bg-black rounded-lg overflow-hidden shrink-0">
+                             <img src={img.thumbnail} className="w-full h-full object-cover opacity-60 group-hover:opacity-100" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                             <p className="text-[9px] font-bold text-slate-200 truncate uppercase">{img.date}</p>
+                             <p className="text-[7px] font-mono text-slate-500 truncate">{img.metadata.sensingTime}</p>
+                          </div>
+                          {img.localPath && <CheckCircle2 size={12} className="text-emerald-500 shrink-0" />}
+                       </div>
+                    ))}
+                    {inputData.length === 0 && (
+                       <div className="py-10 text-center opacity-20">
+                          <Database size={24} className="mx-auto mb-2" />
+                          <p className="text-[8px] font-black uppercase">No Linked Data</p>
+                       </div>
+                    )}
                  </div>
               </div>
            </div>
@@ -261,12 +281,29 @@ const AIProcess: React.FC<AIProcessProps> = ({
                                        {node.type === 'INPUT' ? <Database size={20} /> : node.type === 'PROCESS' ? <Cpu size={20} /> : node.type === 'ANALYSIS' ? <BarChart size={20} /> : <HardDrive size={20} />}
                                     </div>
                                     <div className="space-y-1">
-                                       <span className="text-[12px] font-black uppercase text-white">{node.label}</span>
+                                       <div className="flex items-center gap-3">
+                                          {node.type !== 'INPUT' && node.type !== 'OUTPUT' ? (
+                                             <input 
+                                                value={node.label} 
+                                                onChange={e => updateNode(node.id, { label: e.target.value })} 
+                                                className="bg-transparent border-none text-[12px] font-black uppercase text-white p-0 focus:ring-0 outline-none w-48"
+                                             />
+                                          ) : (
+                                             <span className="text-[12px] font-black uppercase text-white">{node.label}</span>
+                                          )}
+                                       </div>
                                        <p className="text-[8px] font-mono text-slate-600 uppercase tracking-widest">{node.type} Node</p>
                                     </div>
                                  </div>
-                                 {node.status === 'RUNNING' && <Loader2 size={16} className="animate-spin text-primary mt-1" />}
-                                 {node.status === 'COMPLETED' && <CheckCircle2 size={16} className="text-emerald-500 mt-1" />}
+                                 <div className="flex items-center gap-3 mt-1">
+                                    {node.status === 'RUNNING' && <Loader2 size={16} className="animate-spin text-primary" />}
+                                    {node.status === 'COMPLETED' && <CheckCircle2 size={16} className="text-emerald-500" />}
+                                    {node.type !== 'INPUT' && node.type !== 'OUTPUT' && !isRunning && (
+                                       <button onClick={() => removeNode(node.id)} className="text-slate-700 hover:text-rose-500 transition-colors p-1">
+                                          <Trash2 size={16} />
+                                       </button>
+                                    )}
+                                 </div>
                               </div>
 
                               {(node.type === 'PROCESS' || node.type === 'ANALYSIS') && (
@@ -283,6 +320,12 @@ const AIProcess: React.FC<AIProcessProps> = ({
                            </div>
                         </div>
                      ))}
+                     
+                     <div className="pt-6 flex justify-center">
+                        <button onClick={addNode} disabled={isRunning} className="px-8 py-3 bg-white/5 border border-white/10 rounded-2xl text-[10px] font-black text-primary uppercase tracking-widest hover:bg-primary/10 hover:border-primary/40 transition-all flex items-center gap-3 group">
+                           <Plus size={16} className="group-hover:rotate-90 transition-transform" /> Add Custom Node
+                        </button>
+                     </div>
                   </div>
                </div>
             ) : (
@@ -290,7 +333,7 @@ const AIProcess: React.FC<AIProcessProps> = ({
                   <div className="grid grid-cols-2 gap-8">
                      <div className="bg-black/40 border border-white/5 rounded-[32px] p-8 space-y-6 shadow-xl flex flex-col min-h-[450px]">
                         <div className="flex justify-between items-center mb-4">
-                           <h4 className="text-[11px] font-black uppercase tracking-widest text-white">Analyzed Mode Trend (>0.4 Pixels)</h4>
+                           <h4 className="text-11px] font-black uppercase tracking-widest text-white">Analyzed Mode Trend (>0.4 Pixels)</h4>
                         </div>
                         <div className="flex-1">
                            <ResponsiveContainer width="100%" height="100%">

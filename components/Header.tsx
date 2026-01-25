@@ -81,33 +81,32 @@ const Header: React.FC<HeaderProps> = ({ activeTab, setActiveTab }) => {
         </nav>
       </div>
 
-      <div className="flex items-center gap-8">
-        {/* Connection Status Indicator */}
+      {/* Right side group: Tactical Link & Beijing Time */}
+      <div className="flex items-center">
+        {/* Tactical Link Info */}
         <div className="flex items-center gap-3">
           <div className="relative">
-            <span className="block size-1.5 bg-emerald-500 rounded-full shadow-[0_0_8px_#10b981]"></span>
-            <span className="absolute inset-0 block size-1.5 bg-emerald-500 rounded-full animate-ping opacity-75"></span>
+            <span className="block size-2 bg-emerald-500 rounded-full shadow-[0_0_8px_#10b981]"></span>
+            <span className="absolute inset-0 block size-2 bg-emerald-500 rounded-full animate-ping opacity-75"></span>
           </div>
           <div className="flex flex-col">
-            <span className="text-[9px] uppercase tracking-widest font-black text-slate-400 leading-none">Tactical Link Online</span>
-            <span className="text-[7px] font-mono text-emerald-500/50 mt-0.5 uppercase tracking-tighter">S-Band Connection Active</span>
+            <span className="text-[10px] uppercase tracking-widest font-black text-slate-300 leading-none">Tactical Link Online</span>
+            <span className="text-[8px] font-mono text-emerald-500 uppercase tracking-tighter mt-1">S-Band Connection Active</span>
           </div>
         </div>
 
-        {/* Minimal Beijing Time Display */}
-        <div className="flex items-center gap-4 pl-8 border-l border-white/5 h-10">
-           <div className="flex flex-col items-end">
-              <span className="text-[12px] font-mono font-black text-slate-100 tracking-wider tabular-nums leading-none">
-                {beijingTime}
-              </span>
-              <div className="flex items-center gap-1.5 mt-1 opacity-40">
-                 <Radio size={8} className="text-primary" />
-                 <span className="text-[7px] font-black text-slate-400 uppercase tracking-[0.2em]">CST BEIJING</span>
-              </div>
-           </div>
-           <div className="bg-white/5 p-2 rounded-lg">
-              <Clock size={14} className="text-primary opacity-70" />
-           </div>
+        {/* Separator line */}
+        <div className="h-8 w-px bg-white/10 mx-6"></div>
+
+        {/* Beijing Time Display */}
+        <div className="flex flex-col items-end min-w-[180px]">
+          <span className="text-[14px] font-mono font-black text-white tracking-widest tabular-nums leading-none">
+            {beijingTime}
+          </span>
+          <div className="flex items-center gap-1.5 mt-1 opacity-50">
+             <Radio size={10} className="text-primary" />
+             <span className="text-[8px] font-black text-slate-400 uppercase tracking-[0.2em]">CST BEIJING</span>
+          </div>
         </div>
       </div>
     </header>
