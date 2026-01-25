@@ -21,7 +21,7 @@ declare global {
   }
 }
 
-const APP_VERSION = "v1.2.0-stable [Almost]";
+const APP_VERSION = "v1.3.0-stable";
 const APP_TITLE = "SATELLITES GET and AI PROCESS PRO";
 
 const rootElement = document.getElementById('root');
