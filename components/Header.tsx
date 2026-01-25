@@ -1,6 +1,6 @@
 
-import React from 'react';
-import { Search, ClipboardList, Terminal, Satellite, BrainCircuit } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Search, ClipboardList, Terminal, Satellite, BrainCircuit, Clock, Radio } from 'lucide-react';
 import { AppTab } from '../types';
 
 interface HeaderProps {
@@ -9,6 +9,38 @@ interface HeaderProps {
 }
 
 const Header: React.FC<HeaderProps> = ({ activeTab, setActiveTab }) => {
+  const [beijingTime, setBeijingTime] = useState('');
+
+  useEffect(() => {
+    const updateClock = () => {
+      const now = new Date();
+      const formatter = new Intl.DateTimeFormat('en-GB', {
+        timeZone: 'Asia/Shanghai',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false
+      });
+      
+      const parts = formatter.formatToParts(now);
+      const d = parts.find(p => p.type === 'day')?.value;
+      const m = parts.find(p => p.type === 'month')?.value;
+      const y = parts.find(p => p.type === 'year')?.value;
+      const hh = parts.find(p => p.type === 'hour')?.value;
+      const mm = parts.find(p => p.type === 'minute')?.value;
+      const ss = parts.find(p => p.type === 'second')?.value;
+      
+      setBeijingTime(`${y}-${m}-${d} ${hh}:${mm}:${ss}`);
+    };
+
+    updateClock();
+    const timer = setInterval(updateClock, 1000);
+    return () => clearInterval(timer);
+  }, []);
+
   const navItems = [
     { id: AppTab.DATA_SEARCH, label: 'Data Search', icon: <Search size={16} /> },
     { id: AppTab.TASK_MANAGEMENT, label: 'Task Management', icon: <ClipboardList size={16} /> },
@@ -17,24 +49,29 @@ const Header: React.FC<HeaderProps> = ({ activeTab, setActiveTab }) => {
   ];
 
   return (
-    <header className="h-16 border-b border-border-dark bg-background-dark px-6 flex items-center justify-between z-50">
+    <header className="h-16 border-b border-border-dark bg-[#0a0c10] px-6 flex items-center justify-between z-50">
       <div className="flex items-center gap-8">
         <div className="flex items-center gap-3">
           <div className="bg-primary p-1.5 rounded-lg flex items-center justify-center shadow-[0_0_15px_rgba(17,180,212,0.4)]">
             <Satellite size={20} className="text-background-dark font-bold" />
           </div>
-          <h1 className="text-lg font-black tracking-tight leading-none">
-            SATELLITES GET <br/>
-            <span className="text-primary font-light text-xs uppercase tracking-[0.2em]">AI PROCESS PRO</span>
-          </h1>
+          <div className="flex flex-col">
+            <h1 className="text-base font-black tracking-tight leading-none text-white uppercase">
+              Satellites Get
+            </h1>
+            <span className="text-primary font-bold text-[9px] uppercase tracking-[0.2em] mt-0.5">Mission Control Pro</span>
+          </div>
         </div>
-        <nav className="hidden md:flex items-center gap-6">
+        
+        <nav className="hidden lg:flex items-center gap-1 bg-black/20 p-1 rounded-xl border border-white/5">
           {navItems.map((item) => (
             <button
               key={item.id}
               onClick={() => setActiveTab(item.id)}
-              className={`text-[11px] font-black uppercase tracking-widest flex items-center gap-2 transition-all ${
-                activeTab === item.id ? 'text-primary' : 'text-slate-500 hover:text-white'
+              className={`text-[10px] font-black uppercase tracking-widest px-4 py-2 rounded-lg flex items-center gap-2 transition-all ${
+                activeTab === item.id 
+                  ? 'text-primary bg-primary/10 shadow-inner' 
+                  : 'text-slate-500 hover:text-white hover:bg-white/5'
               }`}
             >
               {item.icon}
@@ -44,10 +81,33 @@ const Header: React.FC<HeaderProps> = ({ activeTab, setActiveTab }) => {
         </nav>
       </div>
 
-      <div className="flex items-center gap-4">
-        <div className="flex items-center gap-2 bg-panel-dark px-3 py-1.5 rounded-lg border border-border-dark">
-          <span className="size-1.5 bg-emerald-500 rounded-full animate-pulse shadow-[0_0_8px_#10b981]"></span>
-          <span className="text-[9px] uppercase tracking-widest font-black text-slate-400">Tactical Link Online</span>
+      <div className="flex items-center gap-8">
+        {/* Connection Status Indicator */}
+        <div className="flex items-center gap-3">
+          <div className="relative">
+            <span className="block size-1.5 bg-emerald-500 rounded-full shadow-[0_0_8px_#10b981]"></span>
+            <span className="absolute inset-0 block size-1.5 bg-emerald-500 rounded-full animate-ping opacity-75"></span>
+          </div>
+          <div className="flex flex-col">
+            <span className="text-[9px] uppercase tracking-widest font-black text-slate-400 leading-none">Tactical Link Online</span>
+            <span className="text-[7px] font-mono text-emerald-500/50 mt-0.5 uppercase tracking-tighter">S-Band Connection Active</span>
+          </div>
+        </div>
+
+        {/* Minimal Beijing Time Display */}
+        <div className="flex items-center gap-4 pl-8 border-l border-white/5 h-10">
+           <div className="flex flex-col items-end">
+              <span className="text-[12px] font-mono font-black text-slate-100 tracking-wider tabular-nums leading-none">
+                {beijingTime}
+              </span>
+              <div className="flex items-center gap-1.5 mt-1 opacity-40">
+                 <Radio size={8} className="text-primary" />
+                 <span className="text-[7px] font-black text-slate-400 uppercase tracking-[0.2em]">CST BEIJING</span>
+              </div>
+           </div>
+           <div className="bg-white/5 p-2 rounded-lg">
+              <Clock size={14} className="text-primary opacity-70" />
+           </div>
         </div>
       </div>
     </header>

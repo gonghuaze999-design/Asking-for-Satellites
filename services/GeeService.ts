@@ -88,6 +88,12 @@ export class GeeService {
     } else if (upAlgo.includes('VEG_MASK')) {
       const ndvi = img.normalizedDifference(['B8', 'B4']);
       result = ndvi.updateMask(ndvi.gt(0.4)).rename('VegMask');
+    } else if (upAlgo.includes('GRAY_MODE')) {
+       result = img.expression('0.299*R + 0.587*G + 0.114*B', {
+         'R': img.select('B4'),
+         'G': img.select('B3'),
+         'B': img.select('B2')
+       }).rename('Grayscale');
     }
 
     // STRICT FILENAME ENFORCEMENT
@@ -197,6 +203,13 @@ export class GeeService {
         let processedImg = rawImg.select(['B4', 'B3', 'B2']);
         if (upAlgo.includes('NDVI')) processedImg = rawImg.normalizedDifference(['B8', 'B4']).rename('NDVI');
         else if (upAlgo.includes('NDWI')) processedImg = rawImg.normalizedDifference(['B3', 'B8']).rename('NDWI');
+        else if (upAlgo.includes('GRAY_MODE')) {
+           processedImg = rawImg.expression('0.299*R + 0.587*G + 0.114*B', {
+             'R': rawImg.select('B4'),
+             'G': rawImg.select('B3'),
+             'B': rawImg.select('B2')
+           }).rename('Grayscale');
+        }
 
         const finalImg = processedImg.clip(roi);
         let task: any = null;
