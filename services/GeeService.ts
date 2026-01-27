@@ -60,9 +60,6 @@ export class GeeService {
     });
   }
 
-  /**
-   * Generates a GEE download URL and the expected fileName
-   */
   static async generateSingleLocalUrl(
     imageId: string, 
     sensingDate: string,
@@ -79,7 +76,6 @@ export class GeeService {
     const img = ee.Image(imageId);
     let result = img.select(['B4', 'B3', 'B2']);
     
-    // Index Calculation Mapping
     const upAlgo = algoId.toUpperCase();
     if (upAlgo.includes('NDVI')) {
       result = img.normalizedDifference(['B8', 'B4']).rename('NDVI');
@@ -96,11 +92,8 @@ export class GeeService {
        }).rename('Grayscale');
     }
 
-    // STRICT FILENAME ENFORCEMENT
     const shortId = imageId.split('/').pop() || 'IMG';
-    // Format: YYYYMMDD
     const cleanDate = sensingDate.split('T')[0].replace(/-/g, '').substring(0, 8);
-    // Remove non-alphanumeric chars
     const cleanExp = experimentName.replace(/[^a-zA-Z0-9]/g, '_').toUpperCase();
     const fileName = `${cleanExp}_${cleanDate}_${shortId}`;
 
@@ -116,7 +109,14 @@ export class GeeService {
     });
   }
 
-  static async searchSentinel2(geometry: any, maxCloud: number, dateStart: string, dateEnd: string, logger?: (m: string) => void): Promise<SatelliteResult[]> {
+  static async searchSentinel2(
+    geometry: any, 
+    maxCloud: number, 
+    minCoverage: number, 
+    dateStart: string, 
+    dateEnd: string, 
+    logger?: (m: string) => void
+  ): Promise<SatelliteResult[]> {
     if (!this.initialized) throw new Error("Engine not initialized.");
     const ee = this.ee;
 
@@ -125,14 +125,23 @@ export class GeeService {
         const coords = geometry.geometry ? geometry.geometry.coordinates : geometry.coordinates;
         const roi = ee.Geometry.Polygon(coords);
 
-        const collection = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
+        let collection = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
           .filterBounds(roi)
           .filterDate(dateStart, dateEnd)
-          .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', maxCloud))
-          .sort('system:time_start', false);
+          .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', maxCloud));
+
+        if (minCoverage > 0) {
+          const maxNoData = 100 - minCoverage;
+          collection = collection.filter(ee.Filter.lte('NODATA_PIXEL_PERCENTAGE', maxNoData));
+        }
+
+        collection = collection.sort('system:time_start', false);
 
         collection.limit(200).evaluate((list: any, error: any) => {
-          if (error) return reject(new Error(error.message || error));
+          if (error) {
+            SentinelService.log('ERROR', `GEE Evaluate Error: ${error.message || error}`);
+            return reject(new Error(error.message || error));
+          }
           if (!list || !list.features) return resolve([]);
 
           const results = list.features.map((f: any) => {
@@ -144,6 +153,9 @@ export class GeeService {
             } catch (e) { }
 
             const props = f.properties;
+            const actualNoData = props['NODATA_PIXEL_PERCENTAGE'] || 0;
+            const actualCoverage = Math.round((100 - actualNoData) * 100) / 100;
+
             return {
               id: f.id,
               thumbnail: ee.Image(f.id).getThumbURL({ min: 0, max: 3000, bands: ['B4', 'B3', 'B2'], dimensions: 200, format: 'jpg' }),
@@ -160,7 +172,8 @@ export class GeeService {
                 orbitNumber: props['SENSING_ORBIT_NUMBER']?.toString() || 'N/A',
                 sensingTime: props['system:time_start'] ? new Date(props['system:time_start']).toISOString().replace('T', ' ').split('.')[0] : 'N/A',
                 orbitDirection: props['SENSING_ORBIT_DIRECTION'] || 'DESCENDING',
-                relativeOrbit: props['RELATIVE_ORBIT_NUMBER']?.toString() || 'N/A'
+                relativeOrbit: props['RELATIVE_ORBIT_NUMBER']?.toString() || 'N/A',
+                dataCoverage: `${actualCoverage}%`
               }
             };
           });
@@ -182,7 +195,7 @@ export class GeeService {
     const ee = this.ee;
     
     if (!ee.batch || !ee.batch.Export) {
-        throw new Error("CRITICAL: ee.batch.Export is undefined. Re-authentication required.");
+        throw new Error("CRITICAL: ee.batch.Export is undefined.");
     }
 
     const coords = geometry.geometry ? geometry.geometry.coordinates : geometry.coordinates;
@@ -248,9 +261,8 @@ export class GeeService {
             taskIds.push(taskId);
           }
         } catch (e: any) {
-          const faultMsg = `UPLINK_FAULT: ${e.message || e}`;
-          onStepLog?.(`!! ${faultMsg}`);
-          throw new Error(faultMsg);
+          onStepLog?.(`!! UPLINK_FAULT: ${e.message || e}`);
+          throw e;
         }
         await new Promise(r => setTimeout(r, 500));
     }

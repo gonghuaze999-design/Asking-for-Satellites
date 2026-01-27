@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Database, Search, MousePointer2, Loader2, CheckCircle2, UploadCloud, Terminal, AlertCircle, ChevronRight, Cloud, Radio, Zap, X, Map as MapIcon, Calendar, Layers, Hash, Info, Target, Cpu, Compass, Activity, Trash2 } from 'lucide-react';
+import { Database, Search, MousePointer2, Loader2, CheckCircle2, UploadCloud, Terminal, AlertCircle, ChevronRight, Cloud, Radio, Zap, X, Map as MapIcon, Calendar, Layers, Hash, Info, Target, Cpu, Compass, Activity, Trash2, Maximize } from 'lucide-react';
 import GoogleMapView, { GoogleMapRef } from '../components/GoogleMapView';
 import { GeeService } from '../services/GeeService';
 import { SatelliteResult } from '../types';
@@ -28,6 +28,7 @@ const DataSearch: React.FC<DataSearchProps> = ({ addTask, addLog, results, setRe
   const mapRef = useRef<GoogleMapRef>(null);
   const [roiMode, setRoiMode] = useState<'ADMIN' | 'DRAW' | 'FILE'>('ADMIN');
   const [cloudCover, setCloudCover] = useState(30); 
+  const [minCoverage, setMinCoverage] = useState(0); 
   const [dateStart, setDateStart] = useState('2024-01-01');
   const [dateEnd, setDateEnd] = useState('2024-10-31');
   
@@ -48,7 +49,7 @@ const DataSearch: React.FC<DataSearchProps> = ({ addTask, addLog, results, setRe
   const [cities, setCities] = useState<any[]>([]);
   const [districts, setDistricts] = useState<any[]>([]);
 
-  const hasCurrentGeo = roiMode === 'ADMIN' ? !!selectedDist : roiMode === 'DRAW' ? !!drawGeo : !!fileGeo;
+  const hasCurrentGeo = roiMode === 'ADMIN' ? !!selectedProv : roiMode === 'DRAW' ? !!drawGeo : !!fileGeo;
   const updateProcess = (msg: string) => setProcessLogs(prev => [...prev.slice(-4), `> ${msg}`]);
 
   useEffect(() => {
@@ -59,12 +60,37 @@ const DataSearch: React.FC<DataSearchProps> = ({ addTask, addLog, results, setRe
   }, []);
 
   useEffect(() => {
+    if (roiMode === 'ADMIN') {
+      const names: string[] = [];
+      if (selectedProv) {
+        const prov = divisions.find(d => d.code === selectedProv);
+        if (prov) names.push(prov.name);
+      }
+      if (selectedCity) {
+        const city = cities.find(c => c.code === selectedCity);
+        if (city) names.push(city.name);
+      }
+      if (selectedDist) {
+        const dist = districts.find(d => d.code === selectedDist);
+        if (dist) names.push(dist.name);
+      }
+
+      if (names.length > 0) {
+        geocodeAdmin(names).catch(err => {
+          console.debug("Auto-zoom logic pending map load or valid geometry.");
+        });
+      }
+    }
+  }, [selectedProv, selectedCity, selectedDist, roiMode]);
+
+  useEffect(() => {
     if (roiMode === 'DRAW') onRoiChange(drawGeo);
     if (roiMode === 'FILE') onRoiChange(fileGeo);
   }, [drawGeo, fileGeo, roiMode]);
 
   const geocodeAdmin = async (names: string[]): Promise<any> => {
     return new Promise((resolve, reject) => {
+      if (!window.google || !google.maps) return reject("Map not ready");
       const address = names.join('');
       updateProcess(`Resolving Address: ${address}`);
       const geocoder = new google.maps.Geocoder();
@@ -106,7 +132,7 @@ const DataSearch: React.FC<DataSearchProps> = ({ addTask, addLog, results, setRe
       } else finalGeo = roiMode === 'DRAW' ? drawGeo : fileGeo;
 
       updateProcess(`ROI Locked: Fetching Sentinel-2 (${dateStart} - ${dateEnd})`);
-      const data = await GeeService.searchSentinel2(finalGeo, cloudCover, dateStart, dateEnd, updateProcess);
+      const data = await GeeService.searchSentinel2(finalGeo, cloudCover, minCoverage, dateStart, dateEnd, updateProcess);
       setResults(data);
       if (data.length > 0) {
         addLog('SUCCESS', `Search finished: Found ${data.length} Sentinel-2 scenes`);
@@ -205,9 +231,30 @@ const DataSearch: React.FC<DataSearchProps> = ({ addTask, addLog, results, setRe
           </div>
 
           <div className="space-y-3">
-            <div className="space-y-1"><div className="flex items-center justify-between text-[8px] font-black uppercase tracking-widest text-slate-500"><div className="flex items-center gap-1.5"><Cloud size={10} /> Cloud {cloudCover}%</div></div><input type="range" min="0" max="100" value={cloudCover} onChange={e => setCloudCover(parseInt(e.target.value))} className="w-full h-1 bg-black/40 rounded-lg appearance-none cursor-pointer accent-primary" /></div>
-            <div className="grid grid-cols-2 gap-2"><input type="date" value={dateStart} onChange={e => setDateStart(e.target.value)} className="w-full bg-black/40 border border-white/5 rounded-lg text-[9px] py-2 px-2 text-slate-300 outline-none" /><input type="date" value={dateEnd} onChange={e => setDateEnd(e.target.value)} className="w-full bg-black/40 border border-white/5 rounded-lg text-[9px] py-2 px-2 text-slate-300 outline-none" /></div>
-            <button onClick={handleSearch} disabled={loading || !hasCurrentGeo} className="w-full bg-primary text-black font-black text-[10px] uppercase tracking-widest py-3 rounded-xl flex items-center justify-center gap-2 disabled:opacity-20 hover:scale-[1.01] transition-all">{loading ? <Loader2 className="animate-spin" size={12} /> : <Search size={12} />} Launch Retrieval</button>
+            <div className="space-y-4 bg-white/5 p-3 rounded-xl border border-white/5">
+              <div className="space-y-1">
+                <div className="flex items-center justify-between text-[8px] font-black uppercase tracking-widest text-slate-500">
+                  <div className="flex items-center gap-1.5"><Cloud size={10} /> Max Cloud {cloudCover}%</div>
+                </div>
+                <input type="range" min="0" max="100" value={cloudCover} onChange={e => setCloudCover(parseInt(e.target.value))} className="w-full h-1 bg-black/40 rounded-lg appearance-none cursor-pointer accent-primary" />
+              </div>
+
+              <div className="space-y-1">
+                <div className="flex items-center justify-between text-[8px] font-black uppercase tracking-widest text-primary">
+                  <div className="flex items-center gap-1.5"><Maximize size={10} /> Min Coverage {minCoverage}%</div>
+                </div>
+                <input type="range" min="0" max="100" value={minCoverage} onChange={e => setMinCoverage(parseInt(e.target.value))} className="w-full h-1 bg-black/40 rounded-lg appearance-none cursor-pointer accent-primary" />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <input type="date" value={dateStart} onChange={e => setDateStart(e.target.value)} className="w-full bg-black/40 border border-white/5 rounded-lg text-[9px] py-2 px-2 text-slate-300 outline-none" />
+              <input type="date" value={dateEnd} onChange={e => setDateEnd(e.target.value)} className="w-full bg-black/40 border border-white/5 rounded-lg text-[9px] py-2 px-2 text-slate-300 outline-none" />
+            </div>
+            
+            <button onClick={handleSearch} disabled={loading || !hasCurrentGeo} className="w-full bg-primary text-black font-black text-[10px] uppercase tracking-widest py-3 rounded-xl flex items-center justify-center gap-2 disabled:opacity-20 hover:scale-[1.01] transition-all">
+              {loading ? <Loader2 className="animate-spin" size={12} /> : <Search size={12} />} Launch Retrieval
+            </button>
           </div>
         </div>
 

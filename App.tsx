@@ -28,6 +28,10 @@ const App: React.FC = () => {
   const [aiWorkflowName, setAiWorkflowName] = useState(() => {
     return localStorage.getItem('SENTINEL_AI_WF_NAME') || 'Sentinel_VegMode_Inference';
   });
+
+  // 持久化的 AI 遥测日志和计算结果
+  const [aiTelemetry, setAiTelemetry] = useState<string[]>([]);
+  const [aiWorkflowResults, setAiWorkflowResults] = useState<Record<string, number>>({});
   
   const defaultAiOutputPath = useMemo(() => {
     const firstLocal = searchResults.find(d => !!d.localPath);
@@ -48,7 +52,7 @@ const App: React.FC = () => {
     ];
   });
 
-  // Sync state to LocalStorage
+  // 同步状态到本地存储
   useEffect(() => {
     localStorage.setItem('SENTINEL_AI_TASKS', JSON.stringify(aiTasks));
     localStorage.setItem('SENTINEL_AI_NODES', JSON.stringify(aiNodes));
@@ -123,12 +127,16 @@ const App: React.FC = () => {
             workflowName={aiWorkflowName}
             setWorkflowName={setAiWorkflowName}
             defaultOutputPath={defaultAiOutputPath}
+            telemetry={aiTelemetry}
+            setTelemetry={setAiTelemetry}
+            workflowResults={aiWorkflowResults}
+            setWorkflowResults={setAiWorkflowResults}
           />
         );
       case AppTab.API_CONSOLE:
         return <ApiConsole logs={logs} addLog={addLog} />;
       default:
-        return <DataSearch addTask={addTask} addLog={addLog} setResults={setSearchResults} results={searchResults} onRoiChange={setCurrentRoi} />;
+        return <DataSearch addTask={addTask} addLog={addLog} setSearchResults={setSearchResults} results={searchResults} onRoiChange={setCurrentRoi} />;
     }
   };
 
