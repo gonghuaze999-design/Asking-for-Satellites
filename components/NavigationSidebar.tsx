@@ -6,9 +6,10 @@ import { AppTab } from '../types';
 interface NavigationSidebarProps {
   activeTab: AppTab;
   setActiveTab: (tab: AppTab) => void;
+  onOpenGuide?: () => void;
 }
 
-const NavigationSidebar: React.FC<NavigationSidebarProps> = ({ activeTab, setActiveTab }) => {
+const NavigationSidebar: React.FC<NavigationSidebarProps> = ({ activeTab, setActiveTab, onOpenGuide }) => {
   return (
     <aside className="w-16 border-r border-border-dark flex flex-col items-center py-6 gap-6 bg-background-dark shrink-0">
       <button 
@@ -56,7 +57,11 @@ const NavigationSidebar: React.FC<NavigationSidebarProps> = ({ activeTab, setAct
         <BarChart2 size={22} />
       </button>
       
-      <button className="p-3 text-slate-700 hover:text-white hover:bg-panel-dark rounded-xl transition-all mt-auto">
+      <button 
+        onClick={onOpenGuide}
+        className="p-3 text-slate-700 hover:text-white hover:bg-panel-dark rounded-xl transition-all mt-auto"
+        title="User Manual"
+      >
         <HelpCircle size={22} />
       </button>
     </aside>

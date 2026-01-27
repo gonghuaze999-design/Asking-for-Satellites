@@ -173,9 +173,11 @@ const BUILTIN_WF_ALGOS: WorkflowAlgorithm[] = [
 interface AIProcessProps {
   inputData: SatelliteResult[];
   tasks: AIProcessTask[];
-  setTasks: (tasks: AIProcessTask[]) => void;
+  // Fixed: Update prop type to Dispatch<SetStateAction> to support functional updates like setTasks(prev => ...)
+  setTasks: React.Dispatch<React.SetStateAction<AIProcessTask[]>>;
   nodes: AIWorkflowNode[];
-  setNodes: (nodes: AIWorkflowNode[]) => void;
+  // Fixed: Update prop type to Dispatch<SetStateAction> for consistency and robustness
+  setNodes: React.Dispatch<React.SetStateAction<AIWorkflowNode[]>>;
   viewMode: 'DESIGN' | 'ANALYTICS';
   setViewMode: (mode: 'DESIGN' | 'ANALYTICS') => void;
   workflowName: string;
@@ -432,7 +434,7 @@ const AIProcess: React.FC<AIProcessProps> = ({
         ### 3. 重要指令 (CRITICAL INSTRUCTIONS)
         - 必须使用 Google Search 检索该区域在对应时间段的重大事件、气象灾害记录以增强报告真实性。
         - 返回格式必须是一个 JSON 对象，包含两个键: "brief" 和 "detailed"。
-        - "brief" 和 "detailed" 的值必须是 纯 HTML 代码字符串。严禁在这些键下嵌套对象。
+        - "brief" 和 "detailed" 的值 must be 纯 HTML 代码字符串。严禁在这些键下嵌套对象。
         - 脚注：报告底部必须包含一行文字："MCFLY AgriBrain"。
         
         ### 4. BRIEF 版本 (简报)

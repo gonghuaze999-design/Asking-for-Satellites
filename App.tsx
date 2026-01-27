@@ -6,6 +6,7 @@ import DataSearch from './views/DataSearch';
 import TaskManagement from './views/TaskManagement';
 import AIProcess from './views/AIProcess';
 import ApiConsole from './views/ApiConsole';
+import UserGuide from './components/UserGuide';
 import { AppTab, Task, LogEntry, SatelliteResult, AIWorkflowNode, AIProcessTask } from './types';
 
 const App: React.FC = () => {
@@ -14,6 +15,7 @@ const App: React.FC = () => {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [searchResults, setSearchResults] = useState<SatelliteResult[]>([]);
   const [currentRoi, setCurrentRoi] = useState<any>(null);
+  const [showGuide, setShowGuide] = useState(false);
 
   // --- AI PROCESS PERSISTENT STATE ---
   const [aiTasks, setAiTasks] = useState<AIProcessTask[]>(() => {
@@ -136,7 +138,7 @@ const App: React.FC = () => {
       case AppTab.API_CONSOLE:
         return <ApiConsole logs={logs} addLog={addLog} />;
       default:
-        return <DataSearch addTask={addTask} addLog={addLog} setSearchResults={setSearchResults} results={searchResults} onRoiChange={setCurrentRoi} />;
+        return <DataSearch addTask={addTask} addLog={addLog} setResults={setSearchResults} results={searchResults} onRoiChange={setCurrentRoi} />;
     }
   };
 
@@ -144,11 +146,16 @@ const App: React.FC = () => {
     <div className="flex flex-col h-screen w-screen overflow-hidden bg-background-dark text-slate-100">
       <Header activeTab={activeTab} setActiveTab={setActiveTab} />
       <div className="flex flex-1 overflow-hidden">
-        <NavigationSidebar activeTab={activeTab} setActiveTab={setActiveTab} />
+        <NavigationSidebar 
+          activeTab={activeTab} 
+          setActiveTab={setActiveTab} 
+          onOpenGuide={() => setShowGuide(true)}
+        />
         <main className="flex-1 flex flex-col relative overflow-hidden">
           {renderContent()}
         </main>
       </div>
+      {showGuide && <UserGuide onClose={() => setShowGuide(false)} />}
     </div>
   );
 };
