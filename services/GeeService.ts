@@ -13,12 +13,12 @@ export class GeeService {
 
   static async authenticateManual(token: string, projectId: string): Promise<void> {
     this.currentProjectId = projectId;
-    SentinelService.log('INFO', 'Connecting to GEE Backend...');
+    console.log('INFO', 'Connecting to GEE Backend...');
     const res = await fetch(`${API}/health`);
     const data = await res.json();
     if (data.status === 'ready') {
       this.initialized = true;
-      SentinelService.log('SUCCESS', 'GEE Backend Connected.');
+      console.log('SUCCESS', 'GEE Backend Connected.');
     } else {
       throw new Error('GEE Backend not ready');
     }
