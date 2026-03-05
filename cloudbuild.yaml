@@ -1,0 +1,35 @@
+steps:
+  # Step 1: 构建 Docker 镜像
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - 'gcr.io/gee-satellite-app-483808/satellite-workbench-pro:$COMMIT_SHA'
+      - '-t'
+      - 'gcr.io/gee-satellite-app-483808/satellite-workbench-pro:latest'
+      - '.'
+
+  # Step 2: 推送镜像到 Container Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - '--all-tags'
+      - 'gcr.io/gee-satellite-app-483808/satellite-workbench-pro'
+
+  # Step 3: 部署到 Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'satellite-workbench-pro'
+      - '--image'
+      - 'gcr.io/gee-satellite-app-483808/satellite-workbench-pro:$COMMIT_SHA'
+      - '--region'
+      - 'us-west1'
+      - '--platform'
+      - 'managed'
+      - '--allow-unauthenticated'
+
+options:
+  logging: CLOUD_LOGGING_ONLY
