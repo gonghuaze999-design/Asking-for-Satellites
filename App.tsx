@@ -1,21 +1,64 @@
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import Header from './components/Header';
 import NavigationSidebar from './components/NavigationSidebar';
 import DataSearch from './views/DataSearch';
 import TaskManagement from './views/TaskManagement';
+import AIProcess from './views/AIProcess';
 import ApiConsole from './views/ApiConsole';
-import { AppTab, Task, LogEntry, SatelliteResult } from './types';
+import { AppTab, Task, LogEntry, SatelliteResult, AIWorkflowNode, AIProcessTask } from './types';
 
 const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<AppTab>(AppTab.DATA_SEARCH);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [searchResults, setSearchResults] = useState<SatelliteResult[]>([]);
+  const [currentRoi, setCurrentRoi] = useState<any>(null);
+
+  // --- AI PROCESS PERSISTENT STATE ---
+  const [aiTasks, setAiTasks] = useState<AIProcessTask[]>(() => {
+    const saved = localStorage.getItem('SENTINEL_AI_TASKS');
+    return saved ? JSON.parse(saved) : [];
+  });
+  
+  const [aiViewMode, setAiViewMode] = useState<'DESIGN' | 'ANALYTICS'>(() => {
+    return (localStorage.getItem('SENTINEL_AI_VIEW_MODE') as any) || 'DESIGN';
+  });
+
+  const [aiWorkflowName, setAiWorkflowName] = useState(() => {
+    return localStorage.getItem('SENTINEL_AI_WF_NAME') || 'Sentinel_VegMode_Inference';
+  });
+  
+  const defaultAiOutputPath = useMemo(() => {
+    const firstLocal = searchResults.find(d => !!d.localPath);
+    if (firstLocal) {
+        return firstLocal.localPath.split('/').slice(0, -1).join('/') + '/AI_Results/';
+    }
+    return 'Downloads/Sentinel_AI_Workspace/';
+  }, [searchResults]);
+
+  const [aiNodes, setAiNodes] = useState<AIWorkflowNode[]>(() => {
+    const saved = localStorage.getItem('SENTINEL_AI_NODES');
+    if (saved) return JSON.parse(saved);
+    return [
+      { id: 'node_input', label: 'Imagery Sequence Input', type: 'INPUT', status: 'COMPLETED' },
+      { id: 'node_veg_extract', label: 'NDVI Masker (>0.4)', type: 'PROCESS', status: 'IDLE', linkedAlgoId: 'veg_mask' },
+      { id: 'node_hist', label: 'Histogram Mode Extraction', type: 'ANALYSIS', status: 'IDLE' },
+      { id: 'node_output', label: 'Report Delivery Unit', type: 'OUTPUT', status: 'IDLE', customOutputPath: defaultAiOutputPath }
+    ];
+  });
+
+  // Sync state to LocalStorage
+  useEffect(() => {
+    localStorage.setItem('SENTINEL_AI_TASKS', JSON.stringify(aiTasks));
+    localStorage.setItem('SENTINEL_AI_NODES', JSON.stringify(aiNodes));
+    localStorage.setItem('SENTINEL_AI_VIEW_MODE', aiViewMode);
+    localStorage.setItem('SENTINEL_AI_WF_NAME', aiWorkflowName);
+  }, [aiTasks, aiNodes, aiViewMode, aiWorkflowName]);
 
   const addLog = useCallback((level: LogEntry['level'], message: string, payload?: any) => {
     const newLog: LogEntry = {
-      timestamp: new Date().toLocaleTimeString(),
+      timestamp: new Date().toISOString(),
       level,
       message,
       payload
@@ -23,9 +66,10 @@ const App: React.FC = () => {
     setLogs(prev => [...prev.slice(-99), newLog]);
   }, []);
 
-  const addTask = useCallback((name: string, type: string) => {
+  const addTask = useCallback((name: string, type: string): string => {
+    const id = `GE-${Math.floor(Math.random() * 100000)}`;
     const newTask: Task = {
-      id: `GE-${Math.floor(Math.random() * 100000)}`,
+      id,
       name,
       type,
       status: 'RUNNING',
@@ -34,42 +78,57 @@ const App: React.FC = () => {
       estRemaining: 'calculating...'
     };
     setTasks(prev => [newTask, ...prev]);
-    addLog('INFO', `Dispatched background task: ${name}`, { id: newTask.id, type });
+    addLog('INFO', `Dispatched task: ${name}`, { id, type });
+    return id;
   }, [addLog]);
 
-  // Task Progress Simulation
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setTasks(prev => prev.map(task => {
-        if (task.status !== 'RUNNING') return task;
-        const newProgress = Math.min(task.progress + Math.random() * 5, 100);
-        const isDone = newProgress >= 100;
-        
-        if (isDone) {
-          addLog('SUCCESS', `Task completed: ${task.name}`, { id: task.id });
-        }
-
-        return {
-          ...task,
-          progress: newProgress,
-          status: isDone ? 'COMPLETED' : 'RUNNING',
-          estRemaining: isDone ? undefined : `~${Math.ceil((100 - newProgress) / 2)}m`
-        };
-      }));
-    }, 3000);
-    return () => clearInterval(interval);
-  }, [addLog]);
+  const updateTask = useCallback((id: string, updates: Partial<Task>) => {
+    setTasks(prev => prev.map(t => t.id === id ? { ...t, ...updates } : t));
+  }, []);
 
   const renderContent = () => {
     switch (activeTab) {
       case AppTab.DATA_SEARCH:
-        return <DataSearch addTask={addTask} addLog={addLog} setResults={setSearchResults} results={searchResults} />;
+        return (
+          <DataSearch 
+            addTask={addTask} 
+            addLog={addLog} 
+            setResults={setSearchResults} 
+            results={searchResults} 
+            onRoiChange={setCurrentRoi}
+          />
+        );
       case AppTab.TASK_MANAGEMENT:
-        return <TaskManagement tasks={tasks} />;
+        return (
+          <TaskManagement 
+            tasks={tasks} 
+            inputData={searchResults} 
+            currentRoi={currentRoi}
+            addTask={addTask}
+            updateTask={updateTask}
+            setResults={setSearchResults}
+            setActiveTab={setActiveTab}
+          />
+        );
+      case AppTab.AI_PROCESS:
+        return (
+          <AIProcess 
+            inputData={searchResults} 
+            tasks={aiTasks}
+            setTasks={setAiTasks}
+            nodes={aiNodes}
+            setNodes={setAiNodes}
+            viewMode={aiViewMode}
+            setViewMode={setAiViewMode}
+            workflowName={aiWorkflowName}
+            setWorkflowName={setAiWorkflowName}
+            defaultOutputPath={defaultAiOutputPath}
+          />
+        );
       case AppTab.API_CONSOLE:
         return <ApiConsole logs={logs} addLog={addLog} />;
       default:
-        return <DataSearch addTask={addTask} addLog={addLog} setResults={setSearchResults} results={searchResults} />;
+        return <DataSearch addTask={addTask} addLog={addLog} setResults={setSearchResults} results={searchResults} onRoiChange={setCurrentRoi} />;
     }
   };
 

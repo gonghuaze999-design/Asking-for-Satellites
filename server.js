@@ -59,17 +59,37 @@ app.post('/api/search', checkEE, (req, res) => {
           const imgGeo = f.geometry;
           let coverage = 100;
 
+          // Extract bounds from geometry
+          let bounds = [];
+          try {
+            const geo = f.geometry;
+            if (geo && geo.type === 'Polygon') {
+              bounds = geo.coordinates[0].map(c => [c[1], c[0]]);
+            } else if (geo && geo.type === 'MultiPolygon') {
+              bounds = geo.coordinates[0][0].map(c => [c[1], c[0]]);
+            }
+          } catch (e) {}
+
+          // Generate thumbnail URL via /api/thumbnail proxy
+          const thumbnail = `/api/thumbnail?id=${encodeURIComponent(fullId)}`;
+
           return {
             id: fullId,
+            thumbnail,
             date,
-            cloudCover: cloud,
-            coverage: coverage.toFixed(0),
-            tileId: id,
+            cloudCover: parseFloat(cloud),
+            tileId: props['MGRS_TILE'] || id,
+            bounds,
             metadata: {
-              sensingTime: date,
-              cloudCover: cloud,
               platform: props['SPACECRAFT_NAME'] || 'Sentinel-2',
-              orbitNumber: props['SENSING_ORBIT_NUMBER'] || '',
+              dataLevel: 'Level-2A (SR)',
+              resolution: '10m',
+              bands: 'B4(R), B3(G), B2(B)',
+              processingBaseline: props['PROCESSING_BASELINE'] || 'N/A',
+              orbitNumber: props['SENSING_ORBIT_NUMBER']?.toString() || 'N/A',
+              sensingTime: date,
+              orbitDirection: props['SENSING_ORBIT_DIRECTION'] || 'DESCENDING',
+              relativeOrbit: props['RELATIVE_ORBIT_NUMBER']?.toString() || 'N/A',
               mgrs: props['MGRS_TILE'] || ''
             }
           };

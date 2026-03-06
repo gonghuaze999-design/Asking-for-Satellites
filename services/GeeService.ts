@@ -31,7 +31,6 @@ export class GeeService {
   static async searchSentinel2(
     geometry: any,
     maxCloud: number,
-    minCoverage: number,
     dateStart: string,
     dateEnd: string,
     logger?: (m: string) => void
@@ -41,7 +40,7 @@ export class GeeService {
     const res = await fetch(`${API}/search`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ geometry, cloudCover: maxCloud, minCoverage, dateStart, dateEnd })
+      body: JSON.stringify({ geometry, cloudCover: maxCloud, dateStart, dateEnd })
     });
     if (!res.ok) {
       const err = await res.json();
