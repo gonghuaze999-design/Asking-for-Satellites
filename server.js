@@ -70,12 +70,9 @@ app.post('/api/search', checkEE, (req, res) => {
             }
           } catch (e) {}
 
-          // Generate thumbnail URL via /api/thumbnail proxy
-          const thumbnail = `/api/thumbnail?id=${encodeURIComponent(fullId)}`;
-
           return {
             id: fullId,
-            thumbnail,
+            thumbnail: `/api/thumbnail?id=${encodeURIComponent(fullId)}`,
             date,
             cloudCover: parseFloat(cloud),
             tileId: props['MGRS_TILE'] || id,
@@ -89,8 +86,7 @@ app.post('/api/search', checkEE, (req, res) => {
               orbitNumber: props['SENSING_ORBIT_NUMBER']?.toString() || 'N/A',
               sensingTime: date,
               orbitDirection: props['SENSING_ORBIT_DIRECTION'] || 'DESCENDING',
-              relativeOrbit: props['RELATIVE_ORBIT_NUMBER']?.toString() || 'N/A',
-              mgrs: props['MGRS_TILE'] || ''
+              relativeOrbit: props['RELATIVE_ORBIT_NUMBER']?.toString() || 'N/A'
             }
           };
         });
@@ -104,24 +100,24 @@ app.post('/api/search', checkEE, (req, res) => {
 });
 
 // ── GET /api/thumbnail ───────────────────────────────────────────────────────
-// query: id
+// query: id — proxy image buffer to avoid CORS
 app.get('/api/thumbnail', checkEE, (req, res) => {
   const { id } = req.query;
   if (!id) return res.status(400).json({ error: 'Missing id' });
 
   try {
     const img = ee.Image(id);
-    const url = img.getThumbURL({
-      min: 0, max: 3000,
-      bands: ['B4', 'B3', 'B2'],
-      dimensions: 200,
-      format: 'jpg'
-    });
-    // 服务器端获取 URL 后重定向
     img.getThumbURL({ min: 0, max: 3000, bands: ['B4', 'B3', 'B2'], dimensions: 200, format: 'jpg' },
       (url, err) => {
         if (err) return res.status(500).json({ error: err.toString() });
-        res.redirect(url);
+        const https = require('https');
+        const http = require('http');
+        const client = url.startsWith('https') ? https : http;
+        client.get(url, (imgRes) => {
+          res.setHeader('Content-Type', 'image/jpeg');
+          res.setHeader('Cache-Control', 'public, max-age=86400');
+          imgRes.pipe(res);
+        }).on('error', (e) => res.status(500).json({ error: e.message }));
       }
     );
   } catch (e) {
@@ -140,6 +136,44 @@ app.get('/api/tile', checkEE, (req, res) => {
     ee.Image(id).getMapId(vis, (mapId, err) => {
       if (err) return res.status(500).json({ error: err.toString() });
       res.json({ tileUrl: mapId.urlFormat });
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── POST /api/download ───────────────────────────────────────────────────────
+// body: { id, geometry, algoId, experimentName, sensingDate }
+// returns: { url, fileName }
+app.post('/api/download', checkEE, (req, res) => {
+  const { id, geometry, algoId = 'RGB', experimentName = 'EXPORT', sensingDate = '' } = req.body;
+  if (!id) return res.status(400).json({ error: 'Missing id' });
+
+  try {
+    let img = ee.Image(id);
+
+    // Apply band selection based on algoId
+    if (algoId === 'NDVI') {
+      img = img.normalizedDifference(['B8', 'B4']).rename('NDVI');
+    } else if (algoId === 'NDWI') {
+      img = img.normalizedDifference(['B3', 'B8']).rename('NDWI');
+    } else {
+      img = img.select(['B4', 'B3', 'B2']);
+    }
+
+    const roi = geometry ? ee.Geometry(geometry.geometry || geometry) : null;
+    const params = {
+      name: `${experimentName}_${sensingDate || 'export'}`,
+      scale: 10,
+      filePerBand: false,
+      fileFormat: 'GeoTIFF',
+      ...(roi ? { region: roi } : {})
+    };
+
+    img.getDownloadURL(params, (url, err) => {
+      if (err) return res.status(500).json({ error: err.toString() });
+      const fileName = `${experimentName}_${(sensingDate || id.split('/').pop() || 'export').substring(0, 20)}`;
+      res.json({ url, fileName });
     });
   } catch (e) {
     res.status(500).json({ error: e.message });

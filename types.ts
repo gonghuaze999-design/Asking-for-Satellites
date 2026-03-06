@@ -24,23 +24,17 @@ export interface SatelliteResult {
   cloudCover: number;
   tileId: string;
   bounds: number[][];
-  localPath?: string;
+  localPath?: string; // 物理保存路径，Task 导出后生成
   metadata: {
     platform: string;
+    dataLevel: string;
+    resolution: string;
+    bands: string;
+    processingBaseline: string;
+    orbitNumber: string;
     sensingTime: string;
-    dataLevel?: string;
-    resolution?: string;
-    bands?: string;
-    processingBaseline?: string;
-    orbitNumber?: string;
-    orbitDirection?: string;
-    relativeOrbit?: string;
-    fullId?: string;
-    cloudCover?: string;
-    mgrs?: string;
-    dataDate?: string;
-    sunAzimuth?: number;
-    sunElevation?: number;
+    orbitDirection: string;
+    relativeOrbit: string;
   };
 }
 
@@ -56,13 +50,13 @@ export interface AIWorkflowNode {
   label: string;
   type: 'INPUT' | 'PROCESS' | 'ANALYSIS' | 'OUTPUT';
   status: 'IDLE' | 'RUNNING' | 'COMPLETED' | 'FAILED';
-  linkedAlgoId?: string;
+  linkedAlgoId?: string; // 关联 Task 算法库的 ID
   customOutputPath?: string;
 }
 
 export interface AIProcessTask {
   id: string;
-  name: string;
+  name: string; // 自定义 Workflow 名称
   nodes: AIWorkflowNode[];
   status: 'RUNNING' | 'COMPLETED' | 'FAILED';
   progress: number;
