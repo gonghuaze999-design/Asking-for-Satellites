@@ -375,7 +375,7 @@ const AIProcess: React.FC<AIProcessProps> = ({
                   <div className="grid grid-cols-2 gap-8">
                      <div className="bg-black/40 border border-white/5 rounded-[32px] p-8 space-y-6 shadow-xl flex flex-col min-h-[450px]">
                         <div className="flex justify-between items-center mb-4">
-                           <h4 className="text-[11px] font-black uppercase tracking-widest text-white">Analyzed Mode Trend (>0.4 Pixels)</h4>
+                           <h4 className="text-[11px] font-black uppercase tracking-widest text-white">Analyzed Mode Trend (&gt;0.4 Pixels)</h4>
                         </div>
                         <div className="flex-1">
                            <ResponsiveContainer width="100%" height="100%">
@@ -404,7 +404,7 @@ const AIProcess: React.FC<AIProcessProps> = ({
                               <Sparkles size={14} /> Generate Professional Report
                            </button>
                            <button className="bg-white/5 border border-white/10 text-slate-400 px-6 py-3 rounded-2xl font-black text-[9px] uppercase tracking-widest hover:bg-white/10 transition-all">
-                              Download Class Map (NDVI > 0.4)
+                              Download Class Map (NDVI &gt; 0.4)
                            </button>
                         </div>
                      </div>
