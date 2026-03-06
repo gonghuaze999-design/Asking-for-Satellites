@@ -27,7 +27,8 @@ interface DataSearchProps {
 const DataSearch: React.FC<DataSearchProps> = ({ addTask, addLog, results, setResults, onRoiChange }) => {
   const mapRef = useRef<GoogleMapRef>(null);
   const [roiMode, setRoiMode] = useState<'ADMIN' | 'DRAW' | 'FILE'>('ADMIN');
-  const [cloudCover, setCloudCover] = useState(30); 
+  const [cloudCover, setCloudCover] = useState(30);
+  const [minCoverage, setMinCoverage] = useState(0);
   const [dateStart, setDateStart] = useState('2024-01-01');
   const [dateEnd, setDateEnd] = useState('2024-10-31');
   
@@ -206,6 +207,7 @@ const DataSearch: React.FC<DataSearchProps> = ({ addTask, addLog, results, setRe
 
           <div className="space-y-3">
             <div className="space-y-1"><div className="flex items-center justify-between text-[8px] font-black uppercase tracking-widest text-slate-500"><div className="flex items-center gap-1.5"><Cloud size={10} /> Cloud {cloudCover}%</div></div><input type="range" min="0" max="100" value={cloudCover} onChange={e => setCloudCover(parseInt(e.target.value))} className="w-full h-1 bg-black/40 rounded-lg appearance-none cursor-pointer accent-primary" /></div>
+            <div className="space-y-1"><div className="flex items-center justify-between text-[8px] font-black uppercase tracking-widest text-slate-500"><div className="flex items-center gap-1.5"><Layers size={10} /> Coverage ≥{minCoverage}%</div></div><input type="range" min="0" max="100" value={minCoverage} onChange={e => setMinCoverage(parseInt(e.target.value))} className="w-full h-1 bg-black/40 rounded-lg appearance-none cursor-pointer accent-primary" /></div>
             <div className="grid grid-cols-2 gap-2"><input type="date" value={dateStart} onChange={e => setDateStart(e.target.value)} className="w-full bg-black/40 border border-white/5 rounded-lg text-[9px] py-2 px-2 text-slate-300 outline-none" /><input type="date" value={dateEnd} onChange={e => setDateEnd(e.target.value)} className="w-full bg-black/40 border border-white/5 rounded-lg text-[9px] py-2 px-2 text-slate-300 outline-none" /></div>
             <button onClick={handleSearch} disabled={loading || !hasCurrentGeo} className="w-full bg-primary text-black font-black text-[10px] uppercase tracking-widest py-3 rounded-xl flex items-center justify-center gap-2 disabled:opacity-20 hover:scale-[1.01] transition-all">{loading ? <Loader2 className="animate-spin" size={12} /> : <Search size={12} />} Launch Retrieval</button>
           </div>

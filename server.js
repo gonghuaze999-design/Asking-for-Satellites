@@ -100,24 +100,45 @@ app.post('/api/search', checkEE, (req, res) => {
 });
 
 // ── GET /api/thumbnail ───────────────────────────────────────────────────────
-// query: id — proxy image buffer to avoid CORS
+// query: id — proxy image buffer to avoid browser CORS
 app.get('/api/thumbnail', checkEE, (req, res) => {
   const { id } = req.query;
   if (!id) return res.status(400).json({ error: 'Missing id' });
 
   try {
     const img = ee.Image(id);
-    img.getThumbURL({ min: 0, max: 3000, bands: ['B4', 'B3', 'B2'], dimensions: 200, format: 'jpg' },
+    img.getThumbURL(
+      { min: 0, max: 3000, bands: ['B4', 'B3', 'B2'], dimensions: 200, format: 'jpg' },
       (url, err) => {
-        if (err) return res.status(500).json({ error: err.toString() });
+        if (err) {
+          console.error('Thumbnail URL error:', err);
+          return res.status(500).json({ error: err.toString() });
+        }
+        if (!url) return res.status(500).json({ error: 'No URL returned' });
+
+        // Proxy image buffer through server to avoid CORS
         const https = require('https');
         const http = require('http');
         const client = url.startsWith('https') ? https : http;
-        client.get(url, (imgRes) => {
-          res.setHeader('Content-Type', 'image/jpeg');
+
+        const request = client.get(url, (imgRes) => {
+          if (imgRes.statusCode !== 200) {
+            // Fallback: redirect directly
+            return res.redirect(url);
+          }
+          res.setHeader('Content-Type', imgRes.headers['content-type'] || 'image/jpeg');
           res.setHeader('Cache-Control', 'public, max-age=86400');
+          res.setHeader('Access-Control-Allow-Origin', '*');
           imgRes.pipe(res);
-        }).on('error', (e) => res.status(500).json({ error: e.message }));
+        });
+        request.on('error', () => {
+          // If proxy fails, redirect as fallback
+          res.redirect(url);
+        });
+        request.setTimeout(10000, () => {
+          request.destroy();
+          res.redirect(url);
+        });
       }
     );
   } catch (e) {
