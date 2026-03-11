@@ -5,8 +5,8 @@ import { Satellite, Loader2, ChevronRight, ShieldAlert, Globe, MapPin } from 'lu
 import { GeeService } from './services/GeeService';
 
 const APP_VERSION = "v2.0.0";
-const AMAP_KEY = 'f1bbf790b7f90cf469576e1c91782769';
-const GMAP_KEY = 'AIzaSyBb1LZSBgoacxsGseCsOdxegh32UUIwPeM';
+const AMAP_KEY = import.meta.env.VITE_AMAP_KEY;
+const GMAP_KEY = import.meta.env.VITE_GMAP_KEY;
 const DEFAULT_PROJECT_ID = 'gee-satellite-app-483808';
 
 // 全局地图引擎标记，供 DataSearch 判断
